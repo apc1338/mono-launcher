@@ -663,11 +663,19 @@ pub async fn launch_instance(
                 if let Some(jargs) = ljson.pointer("/arguments/jvm").and_then(|a| a.as_array()) {
                     for arg in jargs {
                         if let Some(s) = arg.as_str() {
-                            extra_jvm_args.push(
-                                s.replace("${library_directory}", &lib_root.to_string_lossy())
-                                    .replace("${classpath_separator}", ";")
-                                    .replace("${version_name}", &loader_tag),
-                            );
+                            let mut resolved = s
+                                .replace("${library_directory}", &lib_root.to_string_lossy())
+                                .replace("${classpath_separator}", ";")
+                                .replace("${version_name}", &loader_tag);
+                            // Vanilla client JAR is stored as `<mc_version>.jar`, not `<loader_tag>.jar`.
+                            if resolved.starts_with("-DignoreList=") {
+                                let mc_jar = format!("{}.jar", inst.mc_version);
+                                if !resolved.split(',').any(|p| p == mc_jar) {
+                                    resolved.push(',');
+                                    resolved.push_str(&mc_jar);
+                                }
+                            }
+                            extra_jvm_args.push(resolved);
                         }
                     }
                 }
