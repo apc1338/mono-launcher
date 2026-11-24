@@ -4,7 +4,7 @@ use crate::models::{
     AccountType, GameLogEvent, InstanceStatusEvent, LaunchProgressEvent, LoaderType, McVersionInfo,
 };
 use crate::storage;
-use chrono::Utc;
+use chrono::{Local, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
@@ -213,15 +213,29 @@ fn rule_allows_windows(rules: Option<&Value>) -> bool {
     let Some(arr) = rules.and_then(|r| r.as_array()) else {
         return true;
     };
+    let current_arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else if cfg!(target_arch = "x86") {
+        "x86"
+    } else {
+        "x86_64"
+    };
     let mut allowed = false;
     for rule in arr {
+        if rule.get("features").is_some() {
+            continue;
+        }
         let action = rule.get("action").and_then(|a| a.as_str()).unwrap_or("allow");
         let os_match = match rule.get("os").and_then(|o| o.get("name")).and_then(|n| n.as_str()) {
             Some("windows") => true,
             Some(_) => false,
             None => true,
         };
-        if os_match {
+        let arch_match = match rule.get("os").and_then(|o| o.get("arch")).and_then(|a| a.as_str()) {
+            Some(a) => a == current_arch || (current_arch == "x86_64" && a == "amd64"),
+            None => true,
+        };
+        if os_match && arch_match {
             allowed = action == "allow";
         }
     }
@@ -271,7 +285,7 @@ fn emit_log(app: &AppHandle, iid: &str, level: &str, text: String) {
             instance_id: iid.to_string(),
             level: level.to_string(),
             text,
-            timestamp: Utc::now().format("%H:%M:%S").to_string(),
+            timestamp: Local::now().format("%H:%M:%S").to_string(),
         },
     );
 }
@@ -448,6 +462,52 @@ pub async fn launch_instance(
         .to_string();
     let mut extra_jvm_args: Vec<String> = Vec::new();
     let mut extra_game_args: Vec<String> = Vec::new();
+
+    // Apply JVM arguments from the base Minecraft version JSON (e.g. --enable-native-access, --add-exports, StackShadowPages)
+    for sub in ["jna", "lwjgl", "netty"] {
+        let _ = fs::create_dir_all(natives_dir.join(sub));
+    }
+    if let Some(jvm_arr) = version_json.pointer("/arguments/jvm").and_then(|a| a.as_array()) {
+        let natives_str = natives_dir.to_string_lossy().to_string();
+        let lib_str = lib_root.to_string_lossy().to_string();
+        let mut push_jvm_val = |raw: &str| {
+            let resolved = raw
+                .replace("${natives_directory}", &natives_str)
+                .replace("${library_directory}", &lib_str)
+                .replace("${classpath_separator}", ";")
+                .replace("${launcher_name}", "Mono")
+                .replace("${launcher_version}", "0.1.0");
+            if resolved == "-cp"
+                || resolved == "${classpath}"
+                || resolved.starts_with("-Djava.library.path=")
+                || resolved.starts_with("-Dminecraft.launcher.brand=")
+                || resolved.starts_with("-Dminecraft.launcher.version=")
+            {
+                return;
+            }
+            extra_jvm_args.push(resolved);
+        };
+        for item in jvm_arr {
+            if let Some(s) = item.as_str() {
+                push_jvm_val(s);
+            } else if let Some(obj) = item.as_object() {
+                if !rule_allows_windows(obj.get("rules")) {
+                    continue;
+                }
+                match obj.get("value") {
+                    Some(Value::String(s)) => push_jvm_val(s),
+                    Some(Value::Array(vals)) => {
+                        for v in vals {
+                            if let Some(s) = v.as_str() {
+                                push_jvm_val(s);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 
     match inst.loader {
         LoaderType::Vanilla => {}
