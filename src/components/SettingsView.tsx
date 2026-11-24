@@ -282,48 +282,6 @@ export function SettingsView({
               </div>
             </div>
 
-            {/* Optional CurseForge API key override */}
-            <div>
-              <label className="block text-[13px] text-[#a1a1a6] mb-1.5">
-                {t.curseforgeApiKey}
-              </label>
-              <input
-                type="password"
-                value={draft.curseforgeApiKey ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    curseforgeApiKey: e.target.value.trim() ? e.target.value : null,
-                  })
-                }
-                onBlur={() => handleSave(draft)}
-                placeholder="•••••••• (built-in)"
-                className="w-full h-9 px-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] font-mono text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25"
-              />
-              <p className="text-[12px] text-[#85858b] mt-1">{t.curseforgeApiKeyHint}</p>
-            </div>
-
-            {/* Azure Application (client) ID for Microsoft login */}
-            <div>
-              <label className="block text-[13px] text-[#a1a1a6] mb-1.5">
-                {t.msaClientIdLabel}
-              </label>
-              <input
-                type="text"
-                value={draft.msaClientId ?? ""}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    msaClientId: e.target.value.trim() ? e.target.value.trim() : null,
-                  })
-                }
-                onBlur={() => handleSave(draft)}
-                placeholder="61872cbf-… (built-in)"
-                className="w-full h-9 px-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] font-mono text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25"
-              />
-              <p className="text-[12px] text-[#85858b] mt-1">{t.msaClientIdHint}</p>
-            </div>
-
             <div className="space-y-3 pt-1">
               <label className="flex items-center justify-between cursor-pointer">
                 <span className="text-[14px] text-[#ededed]">{t.closeOnLaunch}</span>

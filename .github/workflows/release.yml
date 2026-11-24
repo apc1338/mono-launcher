@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  publish-tauri:
+  publish-portable:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,19 +31,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and create GitHub Release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Mono ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install Mono ${{ github.ref_name }}."
-          releaseDraft: false
-          prerelease: false
+      - name: Build portable executable
+        run: npm run tauri build
 
-      - name: Upload portable executable
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          name: "Mono ${{ github.ref_name }}"
+          body: "Portable Windows executable for Mono ${{ github.ref_name }}."
           files: src-tauri/target/release/mono-launcher.exe
