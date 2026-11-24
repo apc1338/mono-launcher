@@ -242,6 +242,60 @@ fn rule_allows_windows(rules: Option<&Value>) -> bool {
     allowed
 }
 
+fn collect_json_args(arr: Option<&Vec<Value>>, mut push_fn: impl FnMut(&str)) {
+    let Some(items) = arr else {
+        return;
+    };
+    for item in items {
+        if let Some(s) = item.as_str() {
+            push_fn(s);
+        } else if let Some(obj) = item.as_object() {
+            if !rule_allows_windows(obj.get("rules")) {
+                continue;
+            }
+            match obj.get("value") {
+                Some(Value::String(s)) => push_fn(s),
+                Some(Value::Array(vals)) => {
+                    for v in vals {
+                        if let Some(s) = v.as_str() {
+                            push_fn(s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn extract_legacy_extra_game_args(mc_args: &str, out: &mut Vec<String>) {
+    const STANDARD_KEYS: &[&str] = &[
+        "--username",
+        "--version",
+        "--gameDir",
+        "--assetsDir",
+        "--assetIndex",
+        "--uuid",
+        "--accessToken",
+        "--userType",
+        "--versionType",
+        "--userProperties",
+        "--clientId",
+        "--xuid",
+    ];
+    let tokens: Vec<&str> = mc_args.split_whitespace().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        if STANDARD_KEYS.contains(&tok) {
+            i += 2;
+            continue;
+        }
+        out.push(tok.to_string());
+        i += 1;
+    }
+}
+
 fn maven_coords_to_path(coords: &str) -> Option<String> {
     let parts: Vec<&str> = coords.split(':').collect();
     if parts.len() < 3 {
@@ -470,7 +524,7 @@ pub async fn launch_instance(
     if let Some(jvm_arr) = version_json.pointer("/arguments/jvm").and_then(|a| a.as_array()) {
         let natives_str = natives_dir.to_string_lossy().to_string();
         let lib_str = lib_root.to_string_lossy().to_string();
-        let mut push_jvm_val = |raw: &str| {
+        collect_json_args(Some(jvm_arr), |raw| {
             let resolved = raw
                 .replace("${natives_directory}", &natives_str)
                 .replace("${library_directory}", &lib_str)
@@ -486,27 +540,7 @@ pub async fn launch_instance(
                 return;
             }
             extra_jvm_args.push(resolved);
-        };
-        for item in jvm_arr {
-            if let Some(s) = item.as_str() {
-                push_jvm_val(s);
-            } else if let Some(obj) = item.as_object() {
-                if !rule_allows_windows(obj.get("rules")) {
-                    continue;
-                }
-                match obj.get("value") {
-                    Some(Value::String(s)) => push_jvm_val(s),
-                    Some(Value::Array(vals)) => {
-                        for v in vals {
-                            if let Some(s) = v.as_str() {
-                                push_jvm_val(s);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
+        });
     }
 
     match inst.loader {
@@ -567,13 +601,12 @@ pub async fn launch_instance(
                     }
                 }
             }
-            if let Some(jvm_arr) = fjson.pointer("/arguments/jvm").and_then(|a| a.as_array()) {
-                for arg in jvm_arr {
-                    if let Some(s) = arg.as_str() {
-                        extra_jvm_args.push(s.to_string());
-                    }
-                }
-            }
+            collect_json_args(fjson.pointer("/arguments/jvm").and_then(|a| a.as_array()), |s| {
+                extra_jvm_args.push(s.to_string());
+            });
+            collect_json_args(fjson.pointer("/arguments/game").and_then(|a| a.as_array()), |s| {
+                extra_game_args.push(s.to_string());
+            });
         }
         LoaderType::Custom => {
             let profile_path = storage::instance_dir(&instance_id).join("custom_loader.json");
@@ -620,22 +653,17 @@ pub async fn launch_instance(
                     }
                 }
             }
-            if let Some(jvm_arr) = cjson.pointer("/arguments/jvm").and_then(|a| a.as_array()) {
-                for arg in jvm_arr {
-                    if let Some(s) = arg.as_str() {
-                        extra_jvm_args.push(
-                            s.replace("${library_directory}", &lib_root.to_string_lossy())
-                                .replace("${classpath_separator}", ";"),
-                        );
-                    }
-                }
-            }
-            if let Some(game_arr) = cjson.pointer("/arguments/game").and_then(|a| a.as_array()) {
-                for arg in game_arr {
-                    if let Some(s) = arg.as_str() {
-                        extra_game_args.push(s.to_string());
-                    }
-                }
+            collect_json_args(cjson.pointer("/arguments/jvm").and_then(|a| a.as_array()), |s| {
+                extra_jvm_args.push(
+                    s.replace("${library_directory}", &lib_root.to_string_lossy())
+                        .replace("${classpath_separator}", ";"),
+                );
+            });
+            collect_json_args(cjson.pointer("/arguments/game").and_then(|a| a.as_array()), |s| {
+                extra_game_args.push(s.to_string());
+            });
+            if let Some(mc_args) = cjson.get("minecraftArguments").and_then(|v| v.as_str()) {
+                extract_legacy_extra_game_args(mc_args, &mut extra_game_args);
             }
         }
         LoaderType::Forge | LoaderType::Neoforge => {            let is_neo = inst.loader == LoaderType::Neoforge;
@@ -720,31 +748,26 @@ pub async fn launch_instance(
                         }
                     }
                 }
-                if let Some(jargs) = ljson.pointer("/arguments/jvm").and_then(|a| a.as_array()) {
-                    for arg in jargs {
-                        if let Some(s) = arg.as_str() {
-                            let mut resolved = s
-                                .replace("${library_directory}", &lib_root.to_string_lossy())
-                                .replace("${classpath_separator}", ";")
-                                .replace("${version_name}", &loader_tag);
-                            // Vanilla client JAR is stored as `<mc_version>.jar`, not `<loader_tag>.jar`.
-                            if resolved.starts_with("-DignoreList=") {
-                                let mc_jar = format!("{}.jar", inst.mc_version);
-                                if !resolved.split(',').any(|p| p == mc_jar) {
-                                    resolved.push(',');
-                                    resolved.push_str(&mc_jar);
-                                }
-                            }
-                            extra_jvm_args.push(resolved);
+                collect_json_args(ljson.pointer("/arguments/jvm").and_then(|a| a.as_array()), |s| {
+                    let mut resolved = s
+                        .replace("${library_directory}", &lib_root.to_string_lossy())
+                        .replace("${classpath_separator}", ";")
+                        .replace("${version_name}", &loader_tag);
+                    // Vanilla client JAR is stored as `<mc_version>.jar`, not `<loader_tag>.jar`.
+                    if resolved.starts_with("-DignoreList=") {
+                        let mc_jar = format!("{}.jar", inst.mc_version);
+                        if !resolved.split(',').any(|p| p == mc_jar) {
+                            resolved.push(',');
+                            resolved.push_str(&mc_jar);
                         }
                     }
-                }
-                if let Some(gargs) = ljson.pointer("/arguments/game").and_then(|a| a.as_array()) {
-                    for arg in gargs {
-                        if let Some(s) = arg.as_str() {
-                            extra_game_args.push(s.to_string());
-                        }
-                    }
+                    extra_jvm_args.push(resolved);
+                });
+                collect_json_args(ljson.pointer("/arguments/game").and_then(|a| a.as_array()), |s| {
+                    extra_game_args.push(s.to_string());
+                });
+                if let Some(mc_args) = ljson.get("minecraftArguments").and_then(|v| v.as_str()) {
+                    extract_legacy_extra_game_args(mc_args, &mut extra_game_args);
                 }
             }
         }
@@ -803,7 +826,10 @@ pub async fn launch_instance(
     }
 
     // 6. Download Assets
+    let game_dir = storage::instance_game_dir(&instance_id);
+    fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
     let assets_dir = root.join("assets");
+    let mut effective_assets_dir = assets_dir.clone();
     let asset_index_id = version_json
         .pointer("/assetIndex/id")
         .and_then(|v| v.as_str())
@@ -855,6 +881,31 @@ pub async fn launch_instance(
                     let _ = h.await;
                 }
             }
+            let is_virtual = idx_val.get("virtual").and_then(|v| v.as_bool()) == Some(true);
+            let map_resources = idx_val.get("map_to_resources").and_then(|v| v.as_bool()) == Some(true);
+            if is_virtual || map_resources {
+                let target_root = if map_resources {
+                    game_dir.join("resources")
+                } else {
+                    let vdir = assets_dir.join("virtual").join(&asset_index_id);
+                    effective_assets_dir = vdir.clone();
+                    vdir
+                };
+                for (rel_name, obj) in objects {
+                    if let Some(hash) = obj.get("hash").and_then(|h| h.as_str()) {
+                        if hash.len() >= 2 {
+                            let src = assets_dir.join("objects").join(&hash[0..2]).join(hash);
+                            let dst = target_root.join(rel_name);
+                            if src.exists() && !dst.exists() {
+                                if let Some(parent) = dst.parent() {
+                                    let _ = fs::create_dir_all(parent);
+                                }
+                                let _ = fs::copy(&src, &dst);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -869,9 +920,6 @@ pub async fn launch_instance(
         }
     }
     let classpath = unique_cp.join(";");
-
-    let game_dir = storage::instance_game_dir(&instance_id);
-    fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
 
     let mut jvm_args: Vec<String> = vec![
         format!("-Xmx{}M", inst.ram_mb),
@@ -906,7 +954,7 @@ pub async fn launch_instance(
         "--gameDir".to_string(),
         game_dir.to_string_lossy().to_string(),
         "--assetsDir".to_string(),
-        assets_dir.to_string_lossy().to_string(),
+        effective_assets_dir.to_string_lossy().to_string(),
         "--assetIndex".to_string(),
         asset_index_id,
         "--uuid".to_string(),
