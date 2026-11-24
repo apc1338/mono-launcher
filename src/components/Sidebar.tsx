@@ -460,13 +460,10 @@ export function Sidebar({
         <button
           type="button"
           onClick={onOpenCreateModal}
-          className="w-full h-9 px-2.5 rounded-[8px] flex items-center justify-between text-[14px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.04] transition-colors duration-150"
+          className="w-full h-9 px-2.5 rounded-[8px] flex items-center gap-2.5 text-[14px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.04] transition-colors duration-150"
         >
-          <span className="flex items-center gap-2.5 truncate">
-            <Plus size={16} strokeWidth={1.5} className="shrink-0 text-[#85858b]" />
-            <span className="truncate">{t.newInstance}</span>
-          </span>
-          <kbd className="mono-keycap">Ctrl+N</kbd>
+          <Plus size={16} strokeWidth={1.5} className="shrink-0 text-[#85858b]" />
+          <span className="truncate">{t.newInstance}</span>
         </button>
       </div>
 

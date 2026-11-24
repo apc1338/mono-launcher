@@ -347,11 +347,6 @@ export function InstanceView({
     });
   }, [logs, logFilter, logSearch]);
 
-  const errorCount = useMemo(
-    () => logs.filter((l) => l.level === "error").length,
-    [logs]
-  );
-
   const handleToggleItem = async (item: InstalledContent) => {
     if (activeTab !== "mod" && activeTab !== "resourcepack" && activeTab !== "shaderpack") return;
     await api.toggleContent(instance.id, activeTab, item.filename);
@@ -436,7 +431,7 @@ export function InstanceView({
     { id: "shaderpack", label: t.tabShaders },
     { id: "worlds", label: t.tabWorlds },
     { id: "screenshots", label: t.tabScreenshots },
-    { id: "console", label: t.tabConsole, count: errorCount > 0 ? errorCount : undefined, isErr: true },
+    { id: "console", label: t.tabConsole },
     { id: "settings", label: t.tabSettings },
   ];
 

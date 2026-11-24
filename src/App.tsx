@@ -181,13 +181,10 @@ export default function App() {
     [activeAccount]
   );
 
-  // Global keyboard shortcuts: Ctrl+N (new instance), Ctrl+Enter (launch active instance)
+  // Global keyboard shortcuts: Ctrl+Enter (launch active instance)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        setShowCreateModal(true);
-      } else if (
+      if (
         (e.ctrlKey || e.metaKey) &&
         e.key === "Enter" &&
         selectedInstance &&
