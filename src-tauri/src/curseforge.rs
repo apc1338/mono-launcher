@@ -57,6 +57,15 @@ fn class_id_for_type(project_type: &str) -> u32 {
     }
 }
 
+fn type_for_class_id(class_id: u32) -> &'static str {
+    match class_id {
+        12 => "resourcepack",
+        6552 => "shader",
+        4471 => "modpack",
+        _ => "mod",
+    }
+}
+
 fn loader_type_id(loader: &str) -> Option<u32> {
     match loader.to_lowercase().as_str() {
         "forge" => Some(1),
@@ -96,6 +105,8 @@ struct CfModResp {
 #[derive(Deserialize)]
 struct CfMod {
     id: u64,
+    #[serde(default, rename = "classId")]
+    class_id: u32,
     slug: String,
     name: String,
     summary: String,
@@ -377,6 +388,20 @@ async fn fetch_mod_meta(api_key: &str, client: &Client, project_id: &str) -> Opt
     resp.json::<CfModResp>().await.ok().map(|r| r.data)
 }
 
+pub(crate) async fn fetch_project_meta_basic(
+    project_id: &str,
+) -> Option<(String, Option<String>, String)> {
+    let api_key = resolve_api_key().ok()?;
+    let client = cf_client().ok()?;
+    let m = fetch_mod_meta(&api_key, &client, project_id).await?;
+    let icon = m
+        .logo
+        .as_ref()
+        .and_then(|l| l.thumbnail_url.clone().or_else(|| l.url.clone()));
+    let ptype = type_for_class_id(m.class_id).to_string();
+    Some((m.name, icon, ptype))
+}
+
 pub async fn install_project_version(
     instance_id: &str,
     project_id: &str,
@@ -428,9 +453,24 @@ fn install_recursive<'a>(
 
         let api_key = resolve_api_key()?;
         let client = cf_client()?;
+        let meta = fetch_mod_meta(&api_key, &client, project_id).await;
+        let effective_type: String = if !is_root {
+            let actual = meta
+                .as_ref()
+                .filter(|m| m.class_id != 0)
+                .map(|m| type_for_class_id(m.class_id))
+                .unwrap_or(project_type);
+            if project_type != "mod" && actual != project_type {
+                return Ok(String::new());
+            }
+            actual.to_string()
+        } else {
+            project_type.to_string()
+        };
+
         let versions = get_project_versions(
             project_id,
-            project_type,
+            &effective_type,
             Some(mc_version),
             loader,
         )
@@ -458,7 +498,7 @@ fn install_recursive<'a>(
             );
         }
 
-        let sub = match project_type {
+        let sub = match effective_type.as_str() {
             "resourcepack" => "resourcepacks",
             "shader" => "shaderpacks",
             _ => "mods",
@@ -480,7 +520,6 @@ fn install_recursive<'a>(
             fs::write(&dest_path, &bytes).map_err(|e| e.to_string())?;
         }
 
-        let meta = fetch_mod_meta(&api_key, &client, project_id).await;
         let display_name = meta
             .as_ref()
             .map(|m| m.name.clone())

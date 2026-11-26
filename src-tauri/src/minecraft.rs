@@ -110,8 +110,60 @@ pub async fn fetch_loader_versions(
             Ok(list.into_iter().take(25).map(|e| e.loader.version).collect())
         }
         LoaderType::Neoforge => {
+            // Primary: PrismLauncher meta API (reliable, includes exact MC version mapping for 1.20.1, 1.21.x, 26.x+)
+            let prism_res = async {
+                let val: Value = client
+                    .get("https://meta.prismlauncher.org/v1/net.neoforged/index.json")
+                    .timeout(std::time::Duration::from_secs(12))
+                    .send()
+                    .await
+                    .map_err(|e| format!("Prism NeoForge meta error: {e}"))?
+                    .json()
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let mut versions = Vec::new();
+                if let Some(arr) = val.get("versions").and_then(|v| v.as_array()) {
+                    for entry in arr {
+                        let matches_mc = entry
+                            .get("requires")
+                            .and_then(|r| r.as_array())
+                            .map(|reqs| {
+                                reqs.iter().any(|r| {
+                                    r.get("uid").and_then(|u| u.as_str()) == Some("net.minecraft")
+                                        && r.get("equals").and_then(|eq| eq.as_str())
+                                            == Some(mc_version)
+                                })
+                            })
+                            .unwrap_or(false);
+                        if matches_mc {
+                            if let Some(ver) = entry.get("version").and_then(|v| v.as_str()) {
+                                versions.push(ver.to_string());
+                                if versions.len() >= 30 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok::<Vec<String>, String>(versions)
+            }
+            .await;
+
+            if let Ok(versions) = prism_res {
+                return Ok(versions);
+            }
+
+            // Fallback: NeoForged Maven metadata XML
+            let is_legacy_1201 = mc_version == "1.20.1";
+            let meta_url = if is_legacy_1201 {
+                "https://maven.neoforged.net/releases/net/neoforged/forge/maven-metadata.xml"
+            } else {
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+            };
             let xml = client
-                .get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+                .get(meta_url)
+                .timeout(std::time::Duration::from_secs(12))
                 .send()
                 .await
                 .map_err(|e| format!("NeoForge metadata error: {e}"))?
@@ -119,12 +171,23 @@ pub async fn fetch_loader_versions(
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // NeoForge versions start with "<mc_minor>.<mc_patch>." e.g. 1.21.4 -> "21.4."
+            // Old MC 1.x scheme: 1.21.4 -> "21.4.", 1.21 -> "21.0.", 1.20.1 -> "1.20.1-"
+            // New MC YY.drop scheme (26.x+): 26.3 -> "26.3.0.", 26.1.2 -> "26.1.2."
             let parts: Vec<&str> = mc_version.split('.').collect();
-            let prefix = if parts.len() >= 3 {
-                format!("{}.{}.", parts[1], parts[2])
+            let prefix = if is_legacy_1201 {
+                "1.20.1-".to_string()
+            } else if parts.first().copied() == Some("1") {
+                if parts.len() >= 3 {
+                    format!("{}.{}.", parts[1], parts[2])
+                } else if parts.len() == 2 {
+                    format!("{}.0.", parts[1])
+                } else {
+                    String::new()
+                }
+            } else if parts.len() >= 3 {
+                format!("{}.{}.{}.", parts[0], parts[1], parts[2])
             } else if parts.len() == 2 {
-                format!("{}.0.", parts[1])
+                format!("{}.{}.0.", parts[0], parts[1])
             } else {
                 String::new()
             };
@@ -135,13 +198,18 @@ pub async fn fetch_loader_versions(
                 if let Some(rest) = t.strip_prefix("<version>") {
                     if let Some(ver) = rest.strip_suffix("</version>") {
                         if prefix.is_empty() || ver.starts_with(&prefix) {
-                            versions.push(ver.to_string());
+                            let clean = if is_legacy_1201 {
+                                ver.strip_prefix("1.20.1-").unwrap_or(ver)
+                            } else {
+                                ver
+                            };
+                            versions.push(clean.to_string());
                         }
                     }
                 }
             }
             versions.reverse();
-            Ok(versions.into_iter().take(25).collect())
+            Ok(versions.into_iter().take(30).collect())
         }
         LoaderType::Forge => {
             let val: Value = client
@@ -681,9 +749,15 @@ pub async fn launch_instance(
                 }
             };
             let installer_url = if is_neo {
-                format!(
-                    "https://maven.neoforged.net/releases/net/neoforged/neoforge/{loader_ver}/neoforge-{loader_ver}-installer.jar"
-                )
+                if inst.mc_version == "1.20.1" {
+                    format!(
+                        "https://maven.neoforged.net/releases/net/neoforged/forge/1.20.1-{loader_ver}/forge-1.20.1-{loader_ver}-installer.jar"
+                    )
+                } else {
+                    format!(
+                        "https://maven.neoforged.net/releases/net/neoforged/neoforge/{loader_ver}/neoforge-{loader_ver}-installer.jar"
+                    )
+                }
             } else {
                 format!(
                     "https://maven.minecraftforge.net/net/minecraftforge/forge/{mc}-{lv}/forge-{mc}-{lv}-installer.jar",

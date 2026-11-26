@@ -37,7 +37,6 @@ export function CreateInstanceModal({
   const [mcVersion, setMcVersion] = useState("1.21.4");
   const [loader, setLoader] = useState<LoaderType>("fabric");
   const [loaderVersion, setLoaderVersion] = useState<string>("");
-  const [customPath, setCustomPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
   const [horizonStatus, setHorizonStatus] = useState<HorizonBuildStatus | null>(null);
@@ -76,10 +75,6 @@ export function CreateInstanceModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isRust && loader === "custom" && !customPath) {
-      setError(t.customLoaderNone);
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
@@ -90,7 +85,6 @@ export function CreateInstanceModal({
         mcVersion: isRust ? RUST_MC_VERSION : mcVersion,
         loader: isRust ? "vanilla" : loader,
         loaderVersion: isRust || loader === "vanilla" ? null : loaderVersion || null,
-        customLoaderPath: !isRust && loader === "custom" ? customPath : null,
       });
       onCreated(inst);
     } catch (err) {
@@ -238,10 +232,7 @@ export function CreateInstanceModal({
             onLoader={setLoader}
             loaderVersion={loaderVersion}
             onLoaderVersion={setLoaderVersion}
-            customPath={customPath}
-            onCustomPath={setCustomPath}
             autoSelectLatest
-            onError={setError}
           />
           )}
 

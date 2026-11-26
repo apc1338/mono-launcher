@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUpCircle,
   Copy,
@@ -10,19 +11,22 @@ import {
   Package,
   Play,
   Plus,
+  Power,
   RefreshCw,
   Search,
   Share,
   Square,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import type { Dict } from "../i18n";
 import { api } from "../lib/api";
 import { ScreenshotsTab, WorldsTab } from "./InstanceExtraTabs";
 import { LoaderFields, loaderLabel as fmtLoader } from "./LoaderFields";
-import { Select } from "./Select";
+import { Checkbox, Select } from "./Select";
 import type {
+  CatalogSource,
   CatalogVersion,
   ContentUpdate,
   GameLogEvent,
@@ -61,7 +65,7 @@ interface InstanceViewProps {
   onStop: () => void;
   onClearLogs: () => void;
   onInstanceReplaced: (updated: Instance) => void;
-  onUpdateInstance: (updated: Instance, customLoaderPath?: string | null) => Promise<void>;
+  onUpdateInstance: (updated: Instance) => Promise<void>;
   onDeleteInstance: (id: string) => Promise<void>;
   onCloneInstance: (id: string, newName: string) => Promise<void>;
   onOpenModrinthFor: (kind: "mod" | "shader" | "resourcepack") => void;
@@ -75,6 +79,37 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+type ContentSort = "name-asc" | "name-desc" | "enabled" | "disabled" | "size-desc" | "size-asc";
+
+/**
+ * Strips noisy MC version & loader prefixes/suffixes from mod/pack version strings
+ * e.g. "mc26.3-0.9.4-beta.1-fabric" -> "0.9.4-beta.1", "0.167.0+26.3" -> "0.167.0"
+ */
+function formatCleanVersion(raw: string | null): string {
+  if (!raw) return "—";
+  let v = raw.trim();
+  if (!v) return "—";
+  // Strip trailing file extensions if CurseForge used filename
+  v = v.replace(/\.(jar|zip)(\.disabled)?$/i, "");
+  // Strip leading loader or mc version prefixes like "mc1.21.4-", "mc26.3-", "fabric-"
+  v = v.replace(/^(?:(?:mc)?\d+\.\d+(?:\.\d+)?|fabric|forge|neoforge|quilt)[-_+]+/i, "");
+  // Strip trailing "+mc1.21.4", "+26.3-fabric", "-fabric", "-neoforge", etc. (repeat in case both exist)
+  for (let i = 0; i < 3; i++) {
+    const next = v.replace(
+      /[-_+]+(?:(?:mc)?\d+\.\d+(?:\.\d+)?|fabric|forge|neoforge|quilt|universal|client|server)$/i,
+      ""
+    );
+    if (next === v || !next) break;
+    v = next;
+  }
+  // If CurseForge filename had mod name prefix like "sodium-0.6.5", extract from first version-like token
+  if (/^[a-z][a-z0-9_.\s-]*[-_ ]v?\d+\.\d+/i.test(v) && !/^v?\d/i.test(v)) {
+    const m = v.match(/v?(\d+\.\d+(?:\.\d+)*(?:[-+][a-z0-9.]+)?)/i);
+    if (m?.[1]) v = m[1];
+  }
+  return v || raw;
 }
 
 function formatPlayTime(sec: number, t: Dict): string {
@@ -111,9 +146,31 @@ export function InstanceView({
   const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? (isRust ? "console" : "mod"));
   const [content, setContent] = useState<InstalledContent[]>([]);
   const [filter, setFilter] = useState("");
+  const [contentSort, setContentSort] = useState<ContentSort>("name-asc");
   const [logFilter, setLogFilter] = useState<"all" | "error" | "warn">("all");
   const [logSearch, setLogSearch] = useState("");
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Content item context menu state
+  const [contentCtxMenu, setContentCtxMenu] = useState<{
+    item: InstalledContent;
+    x: number;
+    y: number;
+    confirmDelete: boolean;
+  } | null>(null);
+  const [contentMenuPos, setContentMenuPos] = useState<{ left: number; top: number }>({
+    left: 0,
+    top: 0,
+  });
+  const contentMenuRef = useRef<HTMLDivElement>(null);
+
+  // Per-item version switcher modal state
+  const [versionPickerItem, setVersionPickerItem] = useState<InstalledContent | null>(null);
+  const [versionPickerList, setVersionPickerList] = useState<CatalogVersion[]>([]);
+  const [versionPickerLoading, setVersionPickerLoading] = useState(false);
+  const [versionPickerOnlyCompat, setVersionPickerOnlyCompat] = useState(true);
+  const [versionPickerBusyId, setVersionPickerBusyId] = useState<string | null>(null);
+  const [versionPickerErr, setVersionPickerErr] = useState<string | null>(null);
 
   // Settings form state
   const [name, setName] = useState(instance.name);
@@ -127,7 +184,6 @@ export function InstanceView({
   const [mcVersionDraft, setMcVersionDraft] = useState(instance.mcVersion);
   const [loaderDraft, setLoaderDraft] = useState<Instance["loader"]>(instance.loader);
   const [loaderVersionDraft, setLoaderVersionDraft] = useState(instance.loaderVersion ?? "");
-  const [customLoaderPath, setCustomLoaderPath] = useState<string | null>(null);
   const [loaderError, setLoaderError] = useState<string | null>(null);
   const [savedFlag, setSavedFlag] = useState(false);
   const [cloning, setCloning] = useState(false);
@@ -188,7 +244,6 @@ export function InstanceView({
     setMcVersionDraft(instance.mcVersion);
     setLoaderDraft(instance.loader);
     setLoaderVersionDraft(instance.loaderVersion ?? "");
-    setCustomLoaderPath(null);
     setLoaderError(null);
     setSavedFlag(false);
   }, [instance]);
@@ -353,15 +408,120 @@ export function InstanceView({
     }
   }, [logs.length, activeTab]);
 
+  useLayoutEffect(() => {
+    if (!contentCtxMenu) return;
+    const el = contentMenuRef.current;
+    const w = el?.offsetWidth ?? 210;
+    const h = el?.offsetHeight ?? 230;
+    const left = Math.max(8, Math.min(contentCtxMenu.x, window.innerWidth - w - 8));
+    const top = Math.max(8, Math.min(contentCtxMenu.y, window.innerHeight - h - 8));
+    setContentMenuPos({ left, top });
+  }, [contentCtxMenu]);
+
+  useEffect(() => {
+    if (!contentCtxMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (contentMenuRef.current?.contains(e.target as Node)) return;
+      setContentCtxMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContentCtxMenu(null);
+    };
+    const close = () => setContentCtxMenu(null);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contentCtxMenu]);
+
+  const openVersionPicker = async (item: InstalledContent) => {
+    if (!item.source || !item.projectId) return;
+    if (activeTab !== "mod" && activeTab !== "resourcepack" && activeTab !== "shaderpack") return;
+    setVersionPickerItem(item);
+    setVersionPickerList([]);
+    setVersionPickerLoading(true);
+    setVersionPickerErr(null);
+    try {
+      const projectType =
+        activeTab === "shaderpack" ? "shader" : activeTab === "resourcepack" ? "resourcepack" : "mod";
+      const list = await api.getCatalogVersions({
+        source: item.source as CatalogSource,
+        projectId: item.projectId,
+        projectType,
+        mcVersion: instance.mcVersion,
+        loader:
+          projectType === "mod" && instance.loader !== "vanilla" && instance.loader !== "custom"
+            ? instance.loader
+            : undefined,
+      });
+      setVersionPickerList(list);
+    } catch (err) {
+      setVersionPickerErr(String(err));
+    } finally {
+      setVersionPickerLoading(false);
+    }
+  };
+
+  const handleSwitchContentVersion = async (ver: CatalogVersion) => {
+    if (!versionPickerItem || !versionPickerItem.source || !versionPickerItem.projectId) return;
+    if (activeTab !== "mod" && activeTab !== "resourcepack" && activeTab !== "shaderpack") return;
+    setVersionPickerBusyId(ver.id);
+    setVersionPickerErr(null);
+    try {
+      await api.applyContentUpdate({
+        instanceId: instance.id,
+        kind: activeTab,
+        currentFilename: versionPickerItem.filename,
+        source: versionPickerItem.source,
+        projectId: versionPickerItem.projectId,
+        versionId: ver.id,
+      });
+      setVersionPickerItem(null);
+      await loadContent(activeTab);
+    } catch (err) {
+      setVersionPickerErr(String(err));
+    } finally {
+      setVersionPickerBusyId(null);
+    }
+  };
+
   const filteredContent = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return content;
-    return content.filter(
-      (c) =>
-        c.displayName.toLowerCase().includes(q) ||
-        c.filename.toLowerCase().includes(q)
-    );
-  }, [content, filter]);
+    const list = q
+      ? content.filter(
+          (c) =>
+            c.displayName.toLowerCase().includes(q) ||
+            c.filename.toLowerCase().includes(q) ||
+            (c.version?.toLowerCase().includes(q) ?? false)
+        )
+      : [...content];
+
+    list.sort((a, b) => {
+      switch (contentSort) {
+        case "name-desc":
+          return b.displayName.localeCompare(a.displayName);
+        case "enabled":
+          if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+          return a.displayName.localeCompare(b.displayName);
+        case "disabled":
+          if (a.enabled !== b.enabled) return a.enabled ? 1 : -1;
+          return a.displayName.localeCompare(b.displayName);
+        case "size-desc":
+          return b.sizeBytes - a.sizeBytes;
+        case "size-asc":
+          return a.sizeBytes - b.sizeBytes;
+        default:
+          return a.displayName.localeCompare(b.displayName);
+      }
+    });
+    return list;
+  }, [content, filter, contentSort]);
 
   const filteredLogs = useMemo(() => {
     const q = logSearch.trim().toLowerCase();
@@ -400,33 +560,25 @@ export function InstanceView({
     const clampedRam = Math.max(512, Math.min(totalRamMb, parseInt(ramInput, 10) || ramMb));
     setRamMb(clampedRam);
     setRamInput(String(clampedRam));
-    if (loaderDraft === "custom" && instance.loader !== "custom" && !customLoaderPath) {
-      setLoaderError(t.customLoaderNone);
-      return;
-    }
     setLoaderError(null);
     try {
-      await onUpdateInstance(
-        {
-      ...instance,
-      name: name.trim() || instance.name,
-      mcVersion: mcVersionDraft,
-      loader: loaderDraft,
-      loaderVersion: loaderDraft === "vanilla" ? null : loaderVersionDraft || null,
-      ramMb: clampedRam,
-      windowWidth: Math.max(640, windowWidth || 1280),
-      windowHeight: Math.max(480, windowHeight || 720),
-      fullscreen,
-      jvmArgs: jvmArgs.trim(),
-      javaPath: javaPath.trim() ? javaPath.trim() : null,
-        },
-        loaderDraft === "custom" ? customLoaderPath : null
-      );
+      await onUpdateInstance({
+        ...instance,
+        name: name.trim() || instance.name,
+        mcVersion: mcVersionDraft,
+        loader: loaderDraft,
+        loaderVersion: loaderDraft === "vanilla" ? null : loaderVersionDraft || null,
+        ramMb: clampedRam,
+        windowWidth: Math.max(640, windowWidth || 1280),
+        windowHeight: Math.max(480, windowHeight || 720),
+        fullscreen,
+        jvmArgs: jvmArgs.trim(),
+        javaPath: javaPath.trim() ? javaPath.trim() : null,
+      });
     } catch (err) {
       setLoaderError(String(err));
       return;
     }
-    setCustomLoaderPath(null);
     setSavedFlag(true);
     setTimeout(() => setSavedFlag(false), 1800);
   };
@@ -660,19 +812,35 @@ export function InstanceView({
       <div key={activeTab} className="flex-1 overflow-y-auto px-8 py-6 mono-view-enter">
         {(activeTab === "mod" || activeTab === "resourcepack" || activeTab === "shaderpack") && (
           <div className="max-w-4xl">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div className="relative flex-1 max-w-xs">
-                <Search
-                  size={15}
-                  strokeWidth={1.5}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#85858b]"
-                />
-                <input
-                  type="text"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  placeholder={t.searchFilter}
-                  className="w-full h-9 pl-9 pr-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25 transition-colors duration-150"
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2 flex-1 min-w-[260px]">
+                <div className="relative flex-1 max-w-xs">
+                  <Search
+                    size={15}
+                    strokeWidth={1.5}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#85858b]"
+                  />
+                  <input
+                    type="text"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder={t.searchFilter}
+                    className="w-full h-9 pl-9 pr-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25 transition-colors duration-150"
+                  />
+                </div>
+
+                <Select
+                  value={contentSort}
+                  onChange={(v) => setContentSort(v as ContentSort)}
+                  className="min-w-[165px]"
+                  options={[
+                    { value: "name-asc", label: t.sortNameAsc },
+                    { value: "name-desc", label: t.sortNameDesc },
+                    { value: "enabled", label: t.sortEnabledFirst },
+                    { value: "disabled", label: t.sortDisabledFirst },
+                    { value: "size-desc", label: t.sortSizeDesc },
+                    { value: "size-asc", label: t.sortSizeAsc },
+                  ]}
                 />
               </div>
 
@@ -756,113 +924,137 @@ export function InstanceView({
               </div>
             ) : (
               <div className="rounded-[12px] border border-[#ededed]/[0.08] bg-[#19191b] divide-y divide-[#ededed]/[0.06]">
-                {filteredContent.map((item) => (
-                  <div
-                    key={item.filename}
-                    className="h-14 px-4 flex items-center gap-3.5 hover:bg-[#ededed]/[0.02] transition-colors duration-150"
-                  >
-                    {/* 1. Enable/Disable switch */}
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={item.enabled}
-                      onClick={() => handleToggleItem(item)}
-                      className={`w-8 h-[18px] rounded-full p-0.5 transition-colors duration-150 shrink-0 ${
-                        item.enabled ? "bg-[#ededed]" : "bg-[#232325] border border-[#ededed]/15"
-                      }`}
+                {filteredContent.map((item) => {
+                  const cleanVer = formatCleanVersion(item.version);
+                  const canSwitchVersion = Boolean(item.source && item.projectId);
+                  return (
+                    <div
+                      key={item.filename}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setContentCtxMenu({
+                          item,
+                          x: e.clientX,
+                          y: e.clientY,
+                          confirmDelete: false,
+                        });
+                      }}
+                      className="h-14 px-4 flex items-center gap-3.5 hover:bg-[#ededed]/[0.025] transition-colors duration-150"
                     >
-                      <span
-                        className={`block w-3.5 h-3.5 rounded-full transition-transform duration-150 ${
-                          item.enabled
-                            ? "translate-x-3.5 bg-[#0f0f10]"
-                            : "translate-x-0 bg-[#85858b]"
-                        }`}
-                      />
-                    </button>
-
-                    {/* 2. Mod Icon */}
-                    {item.iconUrl ? (
-                      <img
-                        src={item.iconUrl}
-                        alt={item.displayName}
-                        className={`w-8 h-8 rounded-[6px] bg-[#232325] object-cover shrink-0 ${
-                          item.enabled ? "" : "opacity-45 grayscale"
-                        }`}
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-[6px] bg-[#232325] flex items-center justify-center shrink-0">
-                        <Package size={15} strokeWidth={1.5} className="text-[#85858b]" />
-                      </div>
-                    )}
-
-                    {/* 3. Proper Mod Name */}
-                    <span
-                      className={`text-[14px] font-medium truncate min-w-[110px] max-w-[220px] shrink-0 ${
-                        item.enabled ? "text-[#ededed]" : "text-[#85858b] line-through"
-                      }`}
-                    >
-                      {item.displayName}
-                    </span>
-
-                    {/* 4. Version */}
-                    <span className="font-mono text-[12px] text-[#a1a1a6] truncate max-w-[140px] shrink-0">
-                      {item.version ?? "—"}
-                    </span>
-
-                    {/* 5. File Size */}
-                    <span className="font-mono text-[12px] text-[#85858b] w-16 text-right shrink-0">
-                      {formatBytes(item.sizeBytes)}
-                    </span>
-
-                    {/* 6. Filename (takes remaining space if it fits) */}
-                    <span
-                      title={item.filename}
-                      className="font-mono text-[12px] text-[#85858b]/70 truncate flex-1 min-w-0 hidden md:block"
-                    >
-                      {item.filename}
-                    </span>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                      {updatesMap[item.filename] && (
-                        <button
-                          type="button"
-                          disabled={Boolean(updatingFiles[item.filename])}
-                          onClick={() => handleApplyOneUpdate(updatesMap[item.filename])}
-                          className="h-7 px-2.5 rounded-[6px] bg-[#4cc38a]/15 text-[#4cc38a] border border-[#4cc38a]/30 hover:bg-[#4cc38a]/25 text-[12px] font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
-                        >
-                          <ArrowUpCircle size={13} strokeWidth={1.75} />
-                          <span className="max-w-[130px] truncate">
-                            {updatingFiles[item.filename]
-                              ? t.updatingItem
-                              : t.updateItem.replace(
-                                  "{ver}",
-                                  updatesMap[item.filename].latestVersionNumber
-                                )}
-                          </span>
-                        </button>
-                      )}
-                      {item.websiteUrl && (
-                        <button
-                          type="button"
-                          onClick={() => api.openExternalUrl(item.websiteUrl!)}
-                          title={t.openWebsite}
-                          className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#85858b] hover:text-[#ededed] hover:bg-[#ededed]/[0.06] transition-colors duration-150"
-                        >
-                          <ExternalLink size={14} strokeWidth={1.5} />
-                        </button>
-                      )}
+                      {/* 1. Enable/Disable switch */}
                       <button
                         type="button"
-                        onClick={() => handleDeleteItem(item)}
-                        className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#85858b] hover:text-[#e5484d] hover:bg-[#e5484d]/10 transition-colors duration-150"
+                        role="switch"
+                        aria-checked={item.enabled}
+                        onClick={() => handleToggleItem(item)}
+                        className={`w-8 h-[18px] rounded-full p-0.5 transition-colors duration-150 shrink-0 ${
+                          item.enabled ? "bg-[#ededed]" : "bg-[#232325] border border-[#ededed]/15"
+                        }`}
                       >
-                        <Trash2 size={15} strokeWidth={1.5} />
+                        <span
+                          className={`block w-3.5 h-3.5 rounded-full transition-transform duration-150 ${
+                            item.enabled
+                              ? "translate-x-3.5 bg-[#0f0f10]"
+                              : "translate-x-0 bg-[#85858b]"
+                          }`}
+                        />
                       </button>
+
+                      {/* 2. Icon */}
+                      {item.iconUrl ? (
+                        <img
+                          src={item.iconUrl}
+                          alt={item.displayName}
+                          className={`w-8 h-8 rounded-[6px] bg-[#232325] object-cover shrink-0 ${
+                            item.enabled ? "" : "opacity-45 grayscale"
+                          }`}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-[6px] bg-[#232325] flex items-center justify-center shrink-0">
+                          <Package size={15} strokeWidth={1.5} className="text-[#85858b]" />
+                        </div>
+                      )}
+
+                      {/* 3. Name (takes available left space) */}
+                      <span
+                        title={item.filename}
+                        className={`text-[14px] font-medium truncate flex-1 min-w-0 ${
+                          item.enabled ? "text-[#ededed]" : "text-[#85858b] line-through"
+                        }`}
+                      >
+                        {item.displayName}
+                      </span>
+
+                      {/* 4. Right side: version + size + actions */}
+                      <div className="flex items-center gap-2 shrink-0 ml-auto">
+                        {updatesMap[item.filename] && (
+                          <button
+                            type="button"
+                            disabled={Boolean(updatingFiles[item.filename])}
+                            onClick={() => handleApplyOneUpdate(updatesMap[item.filename])}
+                            className="h-7 px-2.5 rounded-[6px] bg-[#4cc38a]/15 text-[#4cc38a] border border-[#4cc38a]/30 hover:bg-[#4cc38a]/25 text-[12px] font-medium flex items-center gap-1 transition-colors disabled:opacity-50"
+                          >
+                            <ArrowUpCircle size={13} strokeWidth={1.75} />
+                            <span className="max-w-[130px] truncate">
+                              {updatingFiles[item.filename]
+                                ? t.updatingItem
+                                : t.updateItem.replace(
+                                    "{ver}",
+                                    formatCleanVersion(updatesMap[item.filename].latestVersionNumber)
+                                  )}
+                            </span>
+                          </button>
+                        )}
+
+                        {canSwitchVersion ? (
+                          <button
+                            type="button"
+                            onClick={() => openVersionPicker(item)}
+                            title={`${item.version ?? cleanVer} · ${t.ctxChangeVersion}`}
+                            className="h-7 px-2 rounded-[6px] font-mono text-[12px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.06] inline-flex items-center gap-1.5 max-w-[140px] transition-colors"
+                          >
+                            <span className="truncate">{cleanVer}</span>
+                            <Layers size={12} strokeWidth={1.5} className="shrink-0 text-[#85858b]" />
+                          </button>
+                        ) : (
+                          <span
+                            title={item.version ?? undefined}
+                            className="font-mono text-[12px] text-[#a1a1a6] truncate max-w-[120px] px-1"
+                          >
+                            {cleanVer}
+                          </span>
+                        )}
+
+                        <span className="font-mono text-[12px] text-[#85858b] w-16 text-right shrink-0">
+                          {formatBytes(item.sizeBytes)}
+                        </span>
+
+                        <div className="flex items-center gap-1 pl-1">
+                          {item.websiteUrl && (
+                            <button
+                              type="button"
+                              onClick={() => api.openExternalUrl(item.websiteUrl!)}
+                              title={t.openWebsite}
+                              className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#85858b] hover:text-[#ededed] hover:bg-[#ededed]/[0.06] transition-colors duration-150"
+                            >
+                              <ExternalLink size={14} strokeWidth={1.5} />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            title={t.ctxDelete}
+                            onClick={() => handleDeleteItem(item)}
+                            className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#85858b] hover:text-[#e5484d] hover:bg-[#e5484d]/10 transition-colors duration-150"
+                          >
+                            <Trash2 size={15} strokeWidth={1.5} />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1157,10 +1349,6 @@ export function InstanceView({
                   onLoader={setLoaderDraft}
                   loaderVersion={loaderVersionDraft}
                   onLoaderVersion={setLoaderVersionDraft}
-                  customPath={customLoaderPath}
-                  onCustomPath={setCustomLoaderPath}
-                  hasExistingCustom={instance.loader === "custom"}
-                  onError={setLoaderError}
                 />
                 {loaderError && <div className="text-[13px] text-[#e5484d]">{loaderError}</div>}
               </div>
@@ -1378,6 +1566,263 @@ export function InstanceView({
           </form>
         )}
       </div>
+
+      {/* Content right-click context menu */}
+      {contentCtxMenu &&
+        (activeTab === "mod" || activeTab === "resourcepack" || activeTab === "shaderpack") &&
+        createPortal(
+          <div
+            ref={contentMenuRef}
+            role="menu"
+            style={{ left: contentMenuPos.left, top: contentMenuPos.top }}
+            className="fixed z-[110] min-w-[215px] w-max max-w-[270px] p-1 rounded-[10px] bg-[#19191b] border border-[#ededed]/[0.12] shadow-[0_12px_32px_rgba(0,0,0,0.5)] mono-select-enter"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = contentCtxMenu.item;
+                setContentCtxMenu(null);
+                handleToggleItem(target);
+              }}
+              className="w-full h-8 px-2.5 rounded-[6px] flex items-center gap-2.5 text-left whitespace-nowrap text-[13px] text-[#ededed] hover:bg-[#ededed]/[0.07] transition-colors"
+            >
+              <Power
+                size={14}
+                strokeWidth={1.5}
+                className={`shrink-0 ${contentCtxMenu.item.enabled ? "text-[#85858b]" : "text-[#4cc38a]"}`}
+              />
+              <span>{contentCtxMenu.item.enabled ? t.ctxDisable : t.ctxEnable}</span>
+            </button>
+
+            {contentCtxMenu.item.source && contentCtxMenu.item.projectId && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = contentCtxMenu.item;
+                  setContentCtxMenu(null);
+                  openVersionPicker(target);
+                }}
+                className="w-full h-8 px-2.5 rounded-[6px] flex items-center gap-2.5 text-left whitespace-nowrap text-[13px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.07] transition-colors"
+              >
+                <Layers size={14} strokeWidth={1.5} className="shrink-0" />
+                <span>{t.ctxChangeVersion}</span>
+              </button>
+            )}
+
+            {contentCtxMenu.item.websiteUrl && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const url = contentCtxMenu.item.websiteUrl!;
+                  setContentCtxMenu(null);
+                  api.openExternalUrl(url);
+                }}
+                className="w-full h-8 px-2.5 rounded-[6px] flex items-center gap-2.5 text-left whitespace-nowrap text-[13px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.07] transition-colors"
+              >
+                <ExternalLink size={14} strokeWidth={1.5} className="shrink-0" />
+                <span>{t.openWebsite}</span>
+              </button>
+            )}
+
+            <div className="my-1 h-px bg-[#ededed]/[0.08]" />
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const fname = contentCtxMenu.item.filename;
+                setContentCtxMenu(null);
+                api.openContentFile(instance.id, activeTab, fname).catch(() => {});
+              }}
+              className="w-full h-8 px-2.5 rounded-[6px] flex items-center gap-2.5 text-left whitespace-nowrap text-[13px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.07] transition-colors"
+            >
+              <FolderOpen size={14} strokeWidth={1.5} className="shrink-0" />
+              <span>{t.ctxShowInFolder}</span>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const fname = contentCtxMenu.item.filename;
+                setContentCtxMenu(null);
+                navigator.clipboard.writeText(fname).catch(() => {});
+              }}
+              className="w-full h-8 px-2.5 rounded-[6px] flex items-center gap-2.5 text-left whitespace-nowrap text-[13px] text-[#a1a1a6] hover:text-[#ededed] hover:bg-[#ededed]/[0.07] transition-colors"
+            >
+              <Copy size={14} strokeWidth={1.5} className="shrink-0" />
+              <span>{t.ctxCopyFilename}</span>
+            </button>
+
+            <div className="my-1 h-px bg-[#ededed]/[0.08]" />
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                if (!contentCtxMenu.confirmDelete) {
+                  setContentCtxMenu({ ...contentCtxMenu, confirmDelete: true });
+                  return;
+                }
+                const target = contentCtxMenu.item;
+                setContentCtxMenu(null);
+                handleDeleteItem(target);
+              }}
+              className={`w-full h-8 px-2.5 rounded-[6px] flex items-center gap-2.5 text-left whitespace-nowrap text-[13px] transition-colors ${
+                contentCtxMenu.confirmDelete
+                  ? "bg-[#e5484d]/20 text-[#e5484d] font-medium"
+                  : "text-[#e5484d] hover:bg-[#e5484d]/15"
+              }`}
+            >
+              <Trash2 size={14} strokeWidth={1.5} className="shrink-0" />
+              <span>{contentCtxMenu.confirmDelete ? t.ctxDeleteConfirm : t.ctxDelete}</span>
+            </button>
+          </div>,
+          document.body
+        )}
+
+      {/* Per-item version switcher modal */}
+      {versionPickerItem && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 mono-backdrop-enter"
+          onClick={() => !versionPickerBusyId && setVersionPickerItem(null)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[80vh] rounded-[16px] bg-[#19191b] border border-[#ededed]/[0.1] flex flex-col overflow-hidden mono-modal-enter"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-[#ededed]/[0.08] flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                {versionPickerItem.iconUrl ? (
+                  <img
+                    src={versionPickerItem.iconUrl}
+                    alt=""
+                    className="w-8 h-8 rounded-[8px] bg-[#232325] shrink-0 object-cover"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-[8px] bg-[#232325] flex items-center justify-center shrink-0">
+                    <Package size={15} strokeWidth={1.5} className="text-[#85858b]" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <h2 className="text-[16px] font-medium text-[#ededed] truncate">
+                    {versionPickerItem.displayName} – {t.versionsModalTitle}
+                  </h2>
+                  <div className="font-mono text-[12px] text-[#85858b]">
+                    {instance.mcVersion} · {loaderLabel}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={Boolean(versionPickerBusyId)}
+                onClick={() => setVersionPickerItem(null)}
+                className="w-8 h-8 rounded-[8px] flex items-center justify-center text-[#85858b] hover:text-[#ededed] hover:bg-[#ededed]/[0.06]"
+              >
+                <X size={16} strokeWidth={1.5} />
+              </button>
+            </div>
+
+            <div className="px-6 py-3 border-b border-[#ededed]/[0.06] flex items-center justify-between gap-4 bg-[#141415]/60">
+              <Checkbox
+                checked={versionPickerOnlyCompat}
+                onChange={setVersionPickerOnlyCompat}
+                label={t.onlyCompatible}
+              />
+              {versionPickerItem.version && (
+                <span className="font-mono text-[12px] text-[#85858b]">
+                  {t.currentVersionBadge}: {formatCleanVersion(versionPickerItem.version)}
+                </span>
+              )}
+            </div>
+
+            {versionPickerErr && (
+              <div className="px-6 py-2.5 bg-[#e5484d]/10 border-b border-[#e5484d]/25 text-[13px] text-[#e5484d]">
+                {versionPickerErr}
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto divide-y divide-[#ededed]/[0.06]">
+              {versionPickerLoading ? (
+                <div className="p-8 text-center text-[13px] text-[#85858b]">{t.loadingMore}</div>
+              ) : (
+                (() => {
+                  const list = versionPickerOnlyCompat
+                    ? versionPickerList.filter((v) => v.compatible)
+                    : versionPickerList;
+                  if (list.length === 0) {
+                    return (
+                      <div className="p-8 text-center text-[13px] text-[#85858b]">{t.noResults}</div>
+                    );
+                  }
+                  const curBase = versionPickerItem.filename.replace(/\.disabled$/i, "");
+                  return list.map((ver) => {
+                    const isCurrent =
+                      ver.filename.toLowerCase() === curBase.toLowerCase() ||
+                      (versionPickerItem.version &&
+                        ver.versionNumber === versionPickerItem.version);
+                    const busy = versionPickerBusyId === ver.id;
+                    return (
+                      <div
+                        key={ver.id}
+                        className="px-6 py-3 flex items-center justify-between gap-4 hover:bg-[#ededed]/[0.02]"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              title={ver.versionNumber}
+                              className="text-[14px] font-medium text-[#ededed] truncate"
+                            >
+                              {formatCleanVersion(ver.versionNumber)}
+                            </span>
+                            {isCurrent && (
+                              <span className="text-[11px] font-mono px-1.5 py-0.5 rounded-[4px] bg-[#ededed]/10 text-[#ededed]">
+                                {t.currentVersionBadge}
+                              </span>
+                            )}
+                            <span
+                              className={`text-[11px] font-mono px-1.5 py-0.5 rounded-[4px] ${
+                                ver.compatible
+                                  ? "bg-[#4cc38a]/15 text-[#4cc38a]"
+                                  : "bg-[#e5484d]/15 text-[#e5484d]"
+                              }`}
+                            >
+                              {ver.compatible ? t.compatible : t.incompatible}
+                            </span>
+                            <span className="font-mono text-[11px] text-[#85858b]">
+                              {ver.versionType}
+                            </span>
+                          </div>
+                          <div className="font-mono text-[12px] text-[#85858b] truncate mt-0.5">
+                            {ver.gameVersions.slice(0, 4).join(", ")}
+                            {ver.loaders.length > 0 ? ` · ${ver.loaders.join(", ")}` : ""}
+                            {ver.fileSize ? ` · ${formatBytes(ver.fileSize)}` : ""}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={Boolean(versionPickerBusyId) || Boolean(isCurrent)}
+                          onClick={() => handleSwitchContentVersion(ver)}
+                          className={`h-8 px-3 rounded-[8px] text-[12px] font-medium shrink-0 disabled:opacity-45 ${
+                            ver.compatible ? "mono-btn-primary" : "mono-btn-secondary"
+                          }`}
+                        >
+                          {busy ? t.switchingVersion : isCurrent ? t.currentVersionBadge : t.selectVersionBtn}
+                        </button>
+                      </div>
+                    );
+                  });
+                })()
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

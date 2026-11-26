@@ -251,6 +251,14 @@ async fn fetch_project_meta(client: &Client, project_id: &str) -> Option<RawProj
     client.get(&url).send().await.ok()?.json::<RawProject>().await.ok()
 }
 
+pub(crate) async fn fetch_project_meta_basic(
+    project_id: &str,
+) -> Option<(String, Option<String>, String)> {
+    let client = modrinth_client().ok()?;
+    let proj = fetch_project_meta(&client, project_id).await?;
+    Some((proj.title, proj.icon_url, proj.project_type))
+}
+
 pub async fn install_project_version(
     instance_id: &str,
     project_id: &str,
@@ -301,8 +309,23 @@ fn install_recursive<'a>(
         }
 
         let client = modrinth_client()?;
+        let proj = fetch_project_meta(&client, project_id).await;
+        let effective_type: String = if !is_root {
+            let actual = proj
+                .as_ref()
+                .map(|p| p.project_type.as_str())
+                .unwrap_or(project_type);
+            // Never install a mod (or mismatched content type) as a dependency of a resourcepack or shaderpack
+            if project_type != "mod" && actual != project_type {
+                return Ok(String::new());
+            }
+            actual.to_string()
+        } else {
+            project_type.to_string()
+        };
+
         let versions =
-            get_project_versions(project_id, project_type, Some(mc_version), loader).await?;
+            get_project_versions(project_id, &effective_type, Some(mc_version), loader).await?;
 
         let chosen = if let Some(vid) = version_id {
             versions
@@ -319,7 +342,7 @@ fn install_recursive<'a>(
                 })?
         };
 
-        let sub = match project_type {
+        let sub = match effective_type.as_str() {
             "resourcepack" => "resourcepacks",
             "shader" => "shaderpacks",
             _ => "mods",
@@ -340,7 +363,6 @@ fn install_recursive<'a>(
             fs::write(&dest_path, &bytes).map_err(|e| e.to_string())?;
         }
 
-        let proj = fetch_project_meta(&client, project_id).await;
         let display_name = proj
             .as_ref()
             .map(|p| p.title.clone())

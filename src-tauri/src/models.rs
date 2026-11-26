@@ -227,6 +227,36 @@ pub struct InstallResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BatchResolveItem {
+    pub source: String,
+    pub project_id: String,
+    pub project_type: String,
+    pub title: String,
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub version_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedBatchFile {
+    pub source: String,
+    pub project_id: String,
+    pub project_type: String,
+    pub title: String,
+    pub icon_url: Option<String>,
+    pub version_id: String,
+    pub version_number: String,
+    pub filename: String,
+    pub file_size: u64,
+    pub is_dependency: bool,
+    pub required_by: Option<String>,
+    pub already_installed: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SystemInfo {
     pub total_ram_mb: u64,
     pub detected_javas: Vec<DetectedJava>,

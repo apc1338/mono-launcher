@@ -12,9 +12,9 @@ mod storage;
 use chrono::Utc;
 use minecraft::RunningMap;
 use models::{
-    AccountsStore, CatalogSearchResponse, CatalogVersion, ContentUpdate, InstallResult,
-    InstalledContent, Instance, LauncherSettings, LoaderType, McVersionInfo, MsaDeviceCode,
-    ScreenshotInfo, SystemInfo, WorldInfo,
+    AccountsStore, BatchResolveItem, CatalogSearchResponse, CatalogVersion, ContentUpdate,
+    InstallResult, InstalledContent, Instance, LauncherSettings, LoaderType, McVersionInfo,
+    MsaDeviceCode, ResolvedBatchFile, ScreenshotInfo, SystemInfo, WorldInfo,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -176,7 +176,7 @@ fn create_instance(
     loader: LoaderType,
     loader_version: Option<String>,
     ram_mb: Option<u32>,
-    custom_loader_path: Option<String>,
+    _custom_loader_path: Option<String>,
     edition: Option<String>,
 ) -> Result<Instance, String> {
     let is_rust = edition.as_deref() == Some(horizon::RUST_EDITION);
@@ -190,14 +190,9 @@ fn create_instance(
         return Err("Instance name cannot be empty".into());
     }
     let settings = storage::load_settings();
-    let mut loader_version = loader_version;
     let id = Uuid::new_v4().to_string();
     if loader == LoaderType::Custom {
-        let src = custom_loader_path
-            .as_deref()
-            .ok_or_else(|| "Choose a loader JSON file".to_string())?;
-        let label = storage::install_custom_loader(&id, src)?;
-        loader_version = Some(label);
+        return Err("Custom loaders are not supported".into());
     }
     let inst = Instance {
         id,
@@ -312,6 +307,28 @@ fn delete_content(instance_id: String, kind: String, filename: String) -> Result
 }
 
 #[tauri::command]
+fn open_content_file(instance_id: String, kind: String, filename: String) -> Result<(), String> {
+    let dir = storage::instance_game_dir(&instance_id).join(storage::content_subfolder(&kind));
+    let path = dir.join(&filename);
+    #[cfg(windows)]
+    {
+        if path.exists() {
+            std::process::Command::new("explorer")
+                .args(["/select,", &path.to_string_lossy()])
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            std::process::Command::new("explorer")
+                .arg(&dir)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn fetch_mc_versions(include_snapshots: bool) -> Result<Vec<McVersionInfo>, String> {
     minecraft::fetch_mc_versions(include_snapshots).await
 }
@@ -403,6 +420,225 @@ async fn get_catalog_versions(
 }
 
 #[tauri::command]
+async fn resolve_catalog_batch(
+    instance_id: String,
+    items: Vec<BatchResolveItem>,
+) -> Result<Vec<ResolvedBatchFile>, String> {
+    use std::collections::{HashSet, VecDeque};
+
+    let inst = storage::load_instances()
+        .into_iter()
+        .find(|i| i.id == instance_id)
+        .ok_or_else(|| "Instance not found".to_string())?;
+
+    let is_rust = inst.edition == horizon::RUST_EDITION;
+    let loader_str = match inst.loader {
+        LoaderType::Fabric => Some("fabric"),
+        LoaderType::Quilt => Some("quilt"),
+        LoaderType::Forge => Some("forge"),
+        LoaderType::Neoforge => Some("neoforge"),
+        LoaderType::Vanilla | LoaderType::Custom => None,
+    };
+
+    let meta_map = storage::load_content_meta(&instance_id);
+    let installed_project_ids: HashSet<(String, String)> = meta_map
+        .values()
+        .filter_map(|m| {
+            let s = m.source.as_ref()?.clone();
+            let p = m.project_id.as_ref()?.clone();
+            Some((s, p))
+        })
+        .collect();
+
+    struct QueueEntry {
+        source: String,
+        project_id: String,
+        project_type: String,
+        title: Option<String>,
+        icon_url: Option<String>,
+        version_id: Option<String>,
+        is_dependency: bool,
+        required_by: Option<String>,
+    }
+
+    let mut queue: VecDeque<QueueEntry> = VecDeque::new();
+    let mut visited: HashSet<(String, String)> = HashSet::new();
+
+    for it in items {
+        let key = (it.source.clone(), it.project_id.clone());
+        if visited.insert(key) {
+            queue.push_back(QueueEntry {
+                source: it.source,
+                project_id: it.project_id,
+                project_type: it.project_type,
+                title: Some(it.title),
+                icon_url: it.icon_url,
+                version_id: it.version_id,
+                is_dependency: false,
+                required_by: None,
+            });
+        }
+    }
+
+    let mut resolved: Vec<ResolvedBatchFile> = Vec::new();
+
+    while let Some(entry) = queue.pop_front() {
+        let mut effective_type = entry.project_type.clone();
+        let mut title = entry.title.clone().unwrap_or_else(|| entry.project_id.clone());
+        let mut icon_url = entry.icon_url.clone();
+
+        if entry.is_dependency {
+            let meta = if entry.source == "curseforge" {
+                curseforge::fetch_project_meta_basic(&entry.project_id).await
+            } else {
+                modrinth::fetch_project_meta_basic(&entry.project_id).await
+            };
+            if let Some((t, ic, actual_type)) = meta {
+                if entry.project_type != "mod" && actual_type != entry.project_type {
+                    continue;
+                }
+                title = t;
+                icon_url = ic;
+                effective_type = actual_type;
+            }
+        }
+
+        if is_rust && matches!(effective_type.as_str(), "mod" | "shader" | "shaderpack") {
+            resolved.push(ResolvedBatchFile {
+                source: entry.source,
+                project_id: entry.project_id,
+                project_type: effective_type,
+                title,
+                icon_url,
+                version_id: String::new(),
+                version_number: String::new(),
+                filename: String::new(),
+                file_size: 0,
+                is_dependency: entry.is_dependency,
+                required_by: entry.required_by,
+                already_installed: false,
+                error: Some("Mods and shaders cannot be installed into Rust Edition instances".into()),
+            });
+            continue;
+        }
+
+        let versions_res = if entry.source == "curseforge" {
+            curseforge::get_project_versions(
+                &entry.project_id,
+                &effective_type,
+                Some(&inst.mc_version),
+                loader_str,
+            )
+            .await
+        } else {
+            modrinth::get_project_versions(
+                &entry.project_id,
+                &effective_type,
+                Some(&inst.mc_version),
+                loader_str,
+            )
+            .await
+        };
+
+        let versions = match versions_res {
+            Ok(v) => v,
+            Err(e) => {
+                resolved.push(ResolvedBatchFile {
+                    source: entry.source,
+                    project_id: entry.project_id,
+                    project_type: effective_type,
+                    title,
+                    icon_url,
+                    version_id: String::new(),
+                    version_number: String::new(),
+                    filename: String::new(),
+                    file_size: 0,
+                    is_dependency: entry.is_dependency,
+                    required_by: entry.required_by,
+                    already_installed: false,
+                    error: Some(e),
+                });
+                continue;
+            }
+        };
+
+        let chosen = if let Some(vid) = entry.version_id.as_deref() {
+            versions.into_iter().find(|v| v.id == vid)
+        } else {
+            versions
+                .into_iter()
+                .find(|v| v.compatible && !v.download_url.is_empty())
+        };
+
+        let Some(ver) = chosen else {
+            resolved.push(ResolvedBatchFile {
+                source: entry.source,
+                project_id: entry.project_id,
+                project_type: effective_type,
+                title,
+                icon_url,
+                version_id: String::new(),
+                version_number: String::new(),
+                filename: String::new(),
+                file_size: 0,
+                is_dependency: entry.is_dependency,
+                required_by: entry.required_by,
+                already_installed: false,
+                error: Some("No compatible version found for this Minecraft version and loader".into()),
+            });
+            continue;
+        };
+
+        let sub = match effective_type.as_str() {
+            "resourcepack" => "resourcepacks",
+            "shader" => "shaderpacks",
+            _ => "mods",
+        };
+        let dest_dir = storage::instance_game_dir(&instance_id).join(sub);
+        let file_exists = dest_dir.join(&ver.filename).exists()
+            || dest_dir.join(format!("{}.disabled", ver.filename)).exists();
+        let already_installed = file_exists
+            || installed_project_ids.contains(&(entry.source.clone(), entry.project_id.clone()));
+
+        for dep in &ver.dependencies {
+            if dep.dependency_type == "required" {
+                let key = (entry.source.clone(), dep.project_id.clone());
+                if visited.insert(key) {
+                    queue.push_back(QueueEntry {
+                        source: entry.source.clone(),
+                        project_id: dep.project_id.clone(),
+                        project_type: effective_type.clone(),
+                        title: None,
+                        icon_url: None,
+                        version_id: None,
+                        is_dependency: true,
+                        required_by: Some(title.clone()),
+                    });
+                }
+            }
+        }
+
+        resolved.push(ResolvedBatchFile {
+            source: entry.source,
+            project_id: entry.project_id,
+            project_type: effective_type,
+            title,
+            icon_url,
+            version_id: ver.id,
+            version_number: ver.version_number,
+            filename: ver.filename,
+            file_size: ver.file_size,
+            is_dependency: entry.is_dependency,
+            required_by: entry.required_by,
+            already_installed,
+            error: None,
+        });
+    }
+
+    Ok(resolved)
+}
+
+#[tauri::command]
 async fn install_catalog_project(
     source: String,
     instance_id: String,
@@ -413,6 +649,13 @@ async fn install_catalog_project(
     loader: Option<String>,
     install_deps: Option<bool>,
 ) -> Result<InstallResult, String> {
+    if matches!(project_type.as_str(), "mod" | "shader" | "shaderpack") {
+        if let Some(inst) = storage::load_instances().into_iter().find(|i| i.id == instance_id) {
+            if inst.edition == horizon::RUST_EDITION {
+                return Err("Mods and shaders cannot be installed into Rust Edition instances".into());
+            }
+        }
+    }
     let deps = install_deps.unwrap_or(true);
     if source == "curseforge" {
         curseforge::install_project_version(
@@ -619,9 +862,73 @@ async fn import_horizon_build(path: String) -> Result<horizon::HorizonBuildStatu
         .map_err(|e| e.to_string())?
 }
 
+#[cfg(target_os = "windows")]
+fn apply_native_titlebar_style(window: &tauri::WebviewWindow) {
+    use std::ffi::c_void;
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut c_void,
+            dw_attribute: u32,
+            pv_attribute: *const c_void,
+            cb_attribute: u32,
+        ) -> i32;
+    }
+
+    if let Ok(hwnd) = window.hwnd() {
+        let raw_hwnd = hwnd.0 as *mut c_void;
+        // DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        let dark: i32 = 1;
+        // DWMWA_CAPTION_COLOR = 35, COLORREF = 0x00BBGGRR (#0f0f10 — sidebar background)
+        let caption_color: u32 = 0x0010_0F0F;
+        // DWMWA_TEXT_COLOR = 36 (#ededed)
+        let text_color: u32 = 0x00ED_EDED;
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                raw_hwnd,
+                20,
+                &dark as *const i32 as *const c_void,
+                std::mem::size_of::<i32>() as u32,
+            );
+            let _ = DwmSetWindowAttribute(
+                raw_hwnd,
+                35,
+                &caption_color as *const u32 as *const c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+            let _ = DwmSetWindowAttribute(
+                raw_hwnd,
+                36,
+                &text_color as *const u32 as *const c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    apply_native_titlebar_style(&win);
+                }
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            if matches!(event, tauri::WindowEvent::Focused(_)) {
+                use tauri::Manager;
+                if let Some(win) = window.app_handle().get_webview_window(window.label()) {
+                    apply_native_titlebar_style(&win);
+                }
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState {
@@ -655,12 +962,14 @@ pub fn run() {
             list_content,
             toggle_content,
             delete_content,
+            open_content_file,
             fetch_mc_versions,
             fetch_loader_versions,
             launch_instance,
             stop_instance,
             search_catalog,
             get_catalog_versions,
+            resolve_catalog_batch,
             install_catalog_project,
             install_catalog_modpack,
             import_mrpack,

@@ -142,6 +142,31 @@ export interface InstallResult {
   installedDependencies: string[];
 }
 
+export interface BatchResolveItem {
+  source: CatalogSource;
+  projectId: string;
+  projectType: "mod" | "shader" | "resourcepack";
+  title: string;
+  iconUrl: string | null;
+  versionId?: string | null;
+}
+
+export interface ResolvedBatchFile {
+  source: CatalogSource;
+  projectId: string;
+  projectType: "mod" | "shader" | "resourcepack" | string;
+  title: string;
+  iconUrl: string | null;
+  versionId: string;
+  versionNumber: string;
+  filename: string;
+  fileSize: number;
+  isDependency: boolean;
+  requiredBy: string | null;
+  alreadyInstalled: boolean;
+  error: string | null;
+}
+
 export interface DetectedJava {
   major: number;
   versionString: string;

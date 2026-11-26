@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AccountsStore,
+  BatchResolveItem,
   CatalogSearchResponse,
   CatalogSource,
   CatalogVersion,
@@ -25,6 +26,7 @@ import type {
   PackInstallResult,
   PackProgressEvent,
   PendingDownload,
+  ResolvedBatchFile,
   ScreenshotInfo,
   SystemInfo,
   WorldInfo,
@@ -292,7 +294,6 @@ export const api = {
     loader: LoaderType;
     loaderVersion: string | null;
     ramMb?: number;
-    customLoaderPath?: string | null;
     edition?: "java" | "rust";
   }): Promise<Instance> {
     return invoke<Instance>("create_instance", params);
@@ -318,31 +319,12 @@ export const api = {
     return typeof picked === "string" ? picked : null;
   },
 
-  async updateInstance(
-    instance: Instance,
-    customLoaderPath?: string | null
-  ): Promise<Instance> {
+  async updateInstance(instance: Instance): Promise<Instance> {
     if (!isTauri()) return instance;
     return invoke<Instance>("update_instance", {
       instance,
-      customLoaderPath: customLoaderPath ?? null,
+      customLoaderPath: null,
     });
-  },
-
-  async pickLoaderProfile(title: string): Promise<string | null> {
-    if (!isTauri()) return null;
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      title,
-      filters: [{ name: "Loader profile (JSON)", extensions: ["json"] }],
-    });
-    return typeof selected === "string" ? selected : null;
-  },
-
-  async inspectCustomLoader(path: string): Promise<string> {
-    if (!isTauri()) return "custom";
-    return invoke<string>("inspect_custom_loader", { path });
   },
 
   async deleteInstance(instanceId: string): Promise<void> {
@@ -388,6 +370,11 @@ export const api = {
 
   async deleteContent(instanceId: string, kind: string, filename: string): Promise<void> {
     return invoke("delete_content", { instanceId, kind, filename });
+  },
+
+  async openContentFile(instanceId: string, kind: string, filename: string): Promise<void> {
+    if (!isTauri()) return;
+    return invoke("open_content_file", { instanceId, kind, filename });
   },
 
   async pickAndAddLocalContent(
@@ -630,6 +617,14 @@ export const api = {
       });
     }
     return invoke<CatalogVersion[]>("get_catalog_versions", params);
+  },
+
+  async resolveCatalogBatch(
+    instanceId: string,
+    items: BatchResolveItem[]
+  ): Promise<ResolvedBatchFile[]> {
+    if (!isTauri()) return [];
+    return invoke<ResolvedBatchFile[]>("resolve_catalog_batch", { instanceId, items });
   },
 
   async installCatalogProject(params: {

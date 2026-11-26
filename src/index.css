@@ -31,14 +31,14 @@
     overflow: hidden;
     background-color: var(--bg-main);
     color: var(--text-primary);
-    font-family: "Geist Variable", "Segoe UI", system-ui, sans-serif;
+    font-family: "Onest Variable", "Segoe UI", system-ui, sans-serif;
     font-size: 14px;
     line-height: 20px;
     -webkit-font-smoothing: antialiased;
   }
 
   .font-mono {
-    font-family: "Geist Mono Variable", ui-monospace, Consolas, monospace;
+    font-family: "Onest Variable", "Segoe UI", system-ui, sans-serif;
     font-variant-numeric: tabular-nums;
   }
 
@@ -115,7 +115,8 @@
 }
 
 .mono-keycap {
-  font-family: "Geist Mono Variable", ui-monospace, Consolas, monospace;
+  font-family: "Onest Variable", "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   line-height: 16px;
   padding: 1px 5px;
@@ -126,7 +127,8 @@
 }
 
 .mono-keycap-dark {
-  font-family: "Geist Mono Variable", ui-monospace, Consolas, monospace;
+  font-family: "Onest Variable", "Segoe UI", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
   font-size: 11px;
   line-height: 16px;
   padding: 1px 5px;

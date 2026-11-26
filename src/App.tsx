@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
-import { TitleBar } from "./components/TitleBar";
-import { ActiveView, Sidebar } from "./components/Sidebar";
+import {
+  ActiveView,
+  Sidebar,
+  SIDEBAR_COMPACT_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+} from "./components/Sidebar";
 import { HomeView } from "./components/HomeView";
+import { AllInstancesView } from "./components/AllInstancesView";
 import { InstanceView } from "./components/InstanceView";
 import { ModrinthView } from "./components/ModrinthView";
 import { SettingsView } from "./components/SettingsView";
@@ -52,6 +58,29 @@ export default function App() {
   });
   const [instances, setInstances] = useState<Instance[]>([]);
   const [activeView, setActiveView] = useState<ActiveView>({ type: "home" });
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem("mono.sidebarWidth"));
+      if (
+        Number.isFinite(saved) &&
+        saved >= SIDEBAR_COMPACT_WIDTH &&
+        saved <= SIDEBAR_MAX_WIDTH
+      ) {
+        return saved;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return SIDEBAR_DEFAULT_WIDTH;
+  });
+  const handleResizeSidebar = useCallback((w: number) => {
+    setSidebarWidth(w);
+    try {
+      localStorage.setItem("mono.sidebarWidth", String(w));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
   const [statuses, setStatuses] = useState<Record<string, InstanceRuntimeStatus>>({});
   const [progressMap, setProgressMap] = useState<Record<string, LaunchProgressEvent | null>>({});
   const [logsMap, setLogsMap] = useState<Record<string, GameLogEvent[]>>({});
@@ -254,8 +283,6 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#141415] text-[#ededed] overflow-hidden">
-      <TitleBar />
-
       {bannerError && (
         <div className="px-4 py-2 bg-[#e5484d]/15 border-b border-[#e5484d]/25 flex items-center justify-between gap-4 text-[13px] text-[#e5484d]">
           <span className="truncate">{bannerError}</span>
@@ -276,7 +303,10 @@ export default function App() {
           statuses={statuses}
           activeView={activeView}
           activeAccount={activeAccount}
+          width={sidebarWidth}
+          onResizeWidth={handleResizeSidebar}
           onOpenHome={() => setActiveView({ type: "home" })}
+          onOpenAllInstances={() => setActiveView({ type: "instances" })}
           onSelectInstance={(id, initialTab) =>
             setActiveView({ type: "instance", instanceId: id, initialTab })
           }
@@ -363,15 +393,61 @@ export default function App() {
           {activeView.type === "home" && (
             <HomeView
               t={t}
+              language={settings.language}
               instances={instances}
               statuses={statuses}
               activeAccount={activeAccount}
-              systemInfo={systemInfo}
               onSelectInstance={(id) => setActiveView({ type: "instance", instanceId: id })}
               onLaunchInstance={handleLaunch}
               onStopInstance={(id) => api.stopInstance(id)}
+              onOpenInstanceFolder={(id) => {
+                api.openInstanceFolder(id).catch((err) => setBannerError(String(err)));
+              }}
+              onOpenAllInstances={() => setActiveView({ type: "instances" })}
               onCreateInstance={() => setShowCreateModal(true)}
-              onOpenModrinth={() => setActiveView({ type: "modrinth" })}
+            />
+          )}
+
+          {activeView.type === "instances" && (
+            <AllInstancesView
+              t={t}
+              instances={instances}
+              statuses={statuses}
+              onSelectInstance={(id, initialTab) =>
+                setActiveView({ type: "instance", instanceId: id, initialTab })
+              }
+              onLaunchInstance={handleLaunch}
+              onStopInstance={(id) => api.stopInstance(id)}
+              onToggleFavorite={async (id) => {
+                const target = instances.find((i) => i.id === id);
+                if (!target) return;
+                const updated: Instance = { ...target, favorite: !target.favorite };
+                const others = instances.filter((i) => i.id !== id);
+                const favs = others.filter((i) => i.favorite);
+                const regs = others.filter((i) => !i.favorite);
+                const next = updated.favorite
+                  ? [updated, ...favs, ...regs]
+                  : [...favs, updated, ...regs];
+                setInstances(next);
+                try {
+                  await api.updateInstance(updated);
+                  await api.reorderInstances(next.map((i) => i.id));
+                } catch (err) {
+                  setBannerError(String(err));
+                }
+              }}
+              onOpenInstanceFolder={(id) => {
+                api.openInstanceFolder(id).catch((err) => setBannerError(String(err)));
+              }}
+              onDeleteInstance={async (id) => {
+                try {
+                  await api.deleteInstance(id);
+                  setInstances((prev) => prev.filter((i) => i.id !== id));
+                } catch (err) {
+                  setBannerError(String(err));
+                }
+              }}
+              onCreateInstance={() => setShowCreateModal(true)}
             />
           )}
 
@@ -395,8 +471,8 @@ export default function App() {
                   prev.map((i) => (i.id === updated.id ? updated : i))
                 )
               }
-              onUpdateInstance={async (updated, customLoaderPath) => {
-                const saved = await api.updateInstance(updated, customLoaderPath);
+              onUpdateInstance={async (updated) => {
+                const saved = await api.updateInstance(updated);
                 setInstances((prev) =>
                   prev.map((i) => (i.id === saved.id ? saved : i))
                 );
