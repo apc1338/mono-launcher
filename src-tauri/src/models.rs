@@ -35,6 +35,8 @@ pub struct Instance {
     pub ram_mb: u32,
     pub jvm_args: String,
     pub java_path: Option<String>,
+    #[serde(default)]
+    pub java_major: Option<u32>,
     #[serde(default = "default_width")]
     pub window_width: u32,
     #[serde(default = "default_height")]

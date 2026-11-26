@@ -204,6 +204,7 @@ fn create_instance(
         ram_mb: ram_mb.unwrap_or(settings.default_ram_mb),
         jvm_args: String::new(),
         java_path: None,
+        java_major: None,
         window_width: settings.default_width,
         window_height: settings.default_height,
         fullscreen: settings.default_fullscreen,

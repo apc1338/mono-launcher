@@ -490,6 +490,7 @@ pub async fn launch_instance(
     let java_exe = java::resolve_java_for_instance(
         &app,
         &inst.mc_version,
+        inst.java_major,
         inst.java_path.as_deref(),
         &instance_id,
     )

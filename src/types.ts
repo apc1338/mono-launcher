@@ -12,6 +12,7 @@ export interface Instance {
   ramMb: number;
   jvmArgs: string;
   javaPath: string | null;
+  javaMajor?: number | null;
   windowWidth: number;
   windowHeight: number;
   fullscreen: boolean;

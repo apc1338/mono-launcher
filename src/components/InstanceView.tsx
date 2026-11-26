@@ -181,6 +181,7 @@ export function InstanceView({
   const [fullscreen, setFullscreen] = useState(Boolean(instance.fullscreen));
   const [jvmArgs, setJvmArgs] = useState(instance.jvmArgs);
   const [javaPath, setJavaPath] = useState(instance.javaPath ?? "");
+  const [javaMajor, setJavaMajor] = useState<number | null>(instance.javaMajor ?? null);
   const [mcVersionDraft, setMcVersionDraft] = useState(instance.mcVersion);
   const [loaderDraft, setLoaderDraft] = useState<Instance["loader"]>(instance.loader);
   const [loaderVersionDraft, setLoaderVersionDraft] = useState(instance.loaderVersion ?? "");
@@ -241,6 +242,7 @@ export function InstanceView({
     setFullscreen(Boolean(instance.fullscreen));
     setJvmArgs(instance.jvmArgs);
     setJavaPath(instance.javaPath ?? "");
+    setJavaMajor(instance.javaMajor ?? null);
     setMcVersionDraft(instance.mcVersion);
     setLoaderDraft(instance.loader);
     setLoaderVersionDraft(instance.loaderVersion ?? "");
@@ -574,6 +576,7 @@ export function InstanceView({
         fullscreen,
         jvmArgs: jvmArgs.trim(),
         javaPath: javaPath.trim() ? javaPath.trim() : null,
+        javaMajor,
       });
     } catch (err) {
       setLoaderError(String(err));
@@ -1508,15 +1511,58 @@ export function InstanceView({
 
               <div>
                 <label className="block text-[13px] text-[#a1a1a6] mb-1.5">
+                  {t.javaVersionLabel}
+                </label>
+                <div className="grid grid-cols-5 gap-1 p-1 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08]">
+                  {(
+                    [
+                      [null, t.javaAuto],
+                      [8, "Java 8"],
+                      [17, "Java 17"],
+                      [21, "Java 21"],
+                      [25, "Java 25"],
+                    ] as [number | null, string][]
+                  ).map(([val, label]) => (
+                    <button
+                      key={String(val)}
+                      type="button"
+                      onClick={() => setJavaMajor(val)}
+                      className={`h-8 rounded-[6px] text-[12px] transition-colors duration-150 ${
+                        javaMajor === val
+                          ? "bg-[#232325] text-[#ededed] font-medium"
+                          : "text-[#85858b] hover:text-[#a1a1a6]"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[13px] text-[#a1a1a6] mb-1.5">
                   {t.javaOverride}
                 </label>
-                <input
-                  type="text"
-                  value={javaPath}
-                  onChange={(e) => setJavaPath(e.target.value)}
-                  placeholder={t.javaOverridePlaceholder}
-                  className="w-full h-9 px-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] font-mono text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={javaPath}
+                    onChange={(e) => setJavaPath(e.target.value)}
+                    placeholder={t.javaOverridePlaceholder}
+                    className="flex-1 min-w-0 h-9 px-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] font-mono text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25"
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const picked = await api.pickJavaExecutable(t.javaPickTitle);
+                      if (picked) setJavaPath(picked);
+                    }}
+                    className="mono-btn-secondary h-9 px-3 rounded-[8px] flex items-center gap-1.5 text-[13px] shrink-0"
+                  >
+                    <FolderOpen size={14} strokeWidth={1.5} className="text-[#a1a1a6]" />
+                    <span>{t.javaBrowse}</span>
+                  </button>
+                </div>
               </div>
                 </>
               )}

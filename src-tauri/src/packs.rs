@@ -222,6 +222,7 @@ pub fn prepare_instance(
         ram_mb: settings.default_ram_mb.max(4096),
         jvm_args: String::new(),
         java_path: None,
+        java_major: None,
         window_width: settings.default_width,
         window_height: settings.default_height,
         fullscreen: settings.default_fullscreen,

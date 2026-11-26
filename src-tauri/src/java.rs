@@ -10,7 +10,27 @@ use std::process::Command;
 use tauri::{AppHandle, Emitter};
 
 pub fn required_java_major(mc_version: &str) -> u32 {
-    let parts: Vec<u32> = mc_version
+    let trimmed = mc_version.trim();
+
+    // Weekly snapshots like "26w05a", "25w14a", "24w14a", "21w19a"
+    if let Some(w_idx) = trimmed.find('w') {
+        if w_idx == 2 {
+            if let Ok(year) = trimmed[..2].parse::<u32>() {
+                if year >= 26 {
+                    return 25;
+                }
+                if year >= 24 {
+                    return 21;
+                }
+                if year >= 21 {
+                    return 17;
+                }
+                return 8;
+            }
+        }
+    }
+
+    let parts: Vec<u32> = trimmed
         .split('.')
         .filter_map(|p| {
             let digits: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -18,16 +38,22 @@ pub fn required_java_major(mc_version: &str) -> u32 {
         })
         .collect();
 
-    if parts.len() >= 2 && parts[0] == 1 {
-        let minor = parts[1];
-        let patch = parts.get(2).copied().unwrap_or(0);
-        if minor <= 16 {
-            return 8;
+    if let Some(&first) = parts.first() {
+        // 2026+ drop numbering (26.1, 26.2, 26.3, ...) requires Java 25
+        if first >= 26 {
+            return 25;
         }
-        if minor < 20 || (minor == 20 && patch < 5) {
-            return 17;
+        if first == 1 && parts.len() >= 2 {
+            let minor = parts[1];
+            let patch = parts.get(2).copied().unwrap_or(0);
+            if minor <= 16 {
+                return 8;
+            }
+            if minor < 20 || (minor == 20 && patch < 5) {
+                return 17;
+            }
+            return 21;
         }
-        return 21;
     }
     21
 }
@@ -394,34 +420,39 @@ pub async fn download_java_runtime(
 pub async fn resolve_java_for_instance(
     app: &AppHandle,
     mc_version: &str,
+    override_major: Option<u32>,
     override_path: Option<&str>,
     instance_id: &str,
 ) -> Result<String, String> {
     if let Some(p) = override_path {
-        if !p.trim().is_empty() && Path::new(p).exists() {
-            return Ok(p.to_string());
+        let cleaned = p.trim().trim_matches('"');
+        if !cleaned.is_empty() {
+            if let Some(exe) = resolve_java_exe(Path::new(cleaned)) {
+                return Ok(exe.to_string_lossy().to_string());
+            }
+            return Err(format!("Custom Java path not found: {cleaned}"));
         }
     }
-    let needed = required_java_major(mc_version);
+    let needed = override_major.unwrap_or_else(|| required_java_major(mc_version));
     let settings = storage::load_settings();
     let configured = match needed {
         8 => settings.java_8_path,
         17 => settings.java_17_path,
         21 => settings.java_21_path,
         25 => settings.java_25_path,
-        _ => settings.java_21_path.or(settings.java_25_path),
+        _ => None,
     };
     if let Some(p) = configured {
-        if Path::new(&p).exists() {
-            return Ok(p);
+        if let Some(exe) = resolve_java_exe(Path::new(p.trim().trim_matches('"'))) {
+            return Ok(exe.to_string_lossy().to_string());
         }
     }
     let detected = detect_javas();
     if let Some(exact) = detected.iter().find(|j| j.major == needed) {
         return Ok(exact.path.clone());
     }
-    // Only fall back to Java 25 for 21+ if exact 21 is not present
-    if needed >= 21 {
+    // Only fall back to a newer Java automatically when user did NOT force a specific version
+    if override_major.is_none() && needed >= 21 {
         if let Some(newer) = detected.iter().find(|j| j.major >= needed) {
             return Ok(newer.path.clone());
         }

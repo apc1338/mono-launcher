@@ -331,7 +331,7 @@ async fn ensure_prepared(
 
     // 1. Java 25 (required by horizon-prepare)
     emit_progress(app, iid, "java", 0, 1, "Java 25");
-    let java_exe = java::resolve_java_for_instance(app, HORIZON_MC_VERSION, java_override, iid).await?;
+    let java_exe = java::resolve_java_for_instance(app, HORIZON_MC_VERSION, None, java_override, iid).await?;
     let java_home = Path::new(&java_exe)
         .parent()
         .and_then(|p| p.parent())
