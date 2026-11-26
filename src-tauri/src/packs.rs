@@ -231,6 +231,7 @@ pub fn prepare_instance(
         favorite: false,
         sort_order: None,
         icon_url,
+        edition: "java".to_string(),
     };
     storage::save_instance(&inst)?;
     Ok(inst)

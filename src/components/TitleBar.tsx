@@ -1,4 +1,5 @@
 import { Minus, Square, X } from "lucide-react";
+import launcherIcon from "../assets/launcher-icon.png";
 import { api } from "../lib/api";
 
 export function TitleBar() {
@@ -8,24 +9,12 @@ export function TitleBar() {
       className="h-9 shrink-0 bg-[#0f0f10] border-b border-[#ededed]/[0.08] flex items-center justify-between pl-4 pr-1 select-none"
     >
       <div data-tauri-drag-region className="flex items-center gap-2 pointer-events-none">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
+        <img
+          src={launcherIcon}
+          alt=""
           aria-hidden="true"
-          className="text-[#ededed]"
-        >
-          <rect x="2" y="2.5" width="2.5" height="11" rx="0.5" fill="currentColor" />
-          <rect x="11.5" y="2.5" width="2.5" height="11" rx="0.5" fill="currentColor" />
-          <path
-            d="M4 3.5L8 8.5L12 3.5"
-            stroke="currentColor"
-            strokeWidth="2.1"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+          className="w-[18px] h-[18px] rounded-[4px] object-cover"
+        />
         <span className="text-[13px] font-medium tracking-[-0.01em] text-[#ededed]">
           Mono
         </span>

@@ -26,6 +26,7 @@ import type {
   CatalogVersion,
   ContentUpdate,
   GameLogEvent,
+  HorizonBuildStatus,
   InstalledContent,
   Instance,
   InstanceRuntimeStatus,
@@ -106,7 +107,8 @@ export function InstanceView({
   onOpenPending,
   onModpackSwitched,
 }: InstanceViewProps) {
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? "mod");
+  const isRust = instance.edition === "rust";
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? (isRust ? "console" : "mod"));
   const [content, setContent] = useState<InstalledContent[]>([]);
   const [filter, setFilter] = useState("");
   const [logFilter, setLogFilter] = useState<"all" | "error" | "warn">("all");
@@ -129,6 +131,29 @@ export function InstanceView({
   const [loaderError, setLoaderError] = useState<string | null>(null);
   const [savedFlag, setSavedFlag] = useState(false);
   const [cloning, setCloning] = useState(false);
+  const [horizonStatus, setHorizonStatus] = useState<HorizonBuildStatus | null>(null);
+  const [importingBuild, setImportingBuild] = useState(false);
+  const [horizonErr, setHorizonErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isRust) return;
+    api.getHorizonStatus().then(setHorizonStatus).catch(() => {});
+  }, [isRust, instance.id]);
+
+  const handlePickHorizonBuild = async (archive: boolean) => {
+    setHorizonErr(null);
+    const picked = await api.pickHorizonBuild(t.horizonBuildTitle, archive);
+    if (!picked) return;
+    setImportingBuild(true);
+    try {
+      const st = await api.importHorizonBuild(picked);
+      setHorizonStatus(st);
+    } catch (err) {
+      setHorizonErr(String(err));
+    } finally {
+      setImportingBuild(false);
+    }
+  };
 
   // Modpack record + version switching + pending manual downloads
   const [modpackRecord, setModpackRecord] = useState<ModpackRecord | null>(null);
@@ -425,7 +450,7 @@ export function InstanceView({
       ? Math.min(100, Math.round((progress.current / progress.total) * 100))
       : 0;
 
-  const tabs: { id: TabId; label: string; count?: number; isErr?: boolean }[] = [
+  const allTabs: { id: TabId; label: string; count?: number; isErr?: boolean }[] = [
     { id: "mod", label: t.tabMods },
     { id: "resourcepack", label: t.tabResourcepacks },
     { id: "shaderpack", label: t.tabShaders },
@@ -434,6 +459,8 @@ export function InstanceView({
     { id: "console", label: t.tabConsole },
     { id: "settings", label: t.tabSettings },
   ];
+  // Rust Edition (Horizon) has no Java mods, packs or per-instance game folder: console + settings only.
+  const tabs = isRust ? allTabs.filter((x) => x.id === "console" || x.id === "settings") : allTabs;
 
   const availableUpdatesCount = Object.keys(updatesMap).length;
 
@@ -1077,6 +1104,42 @@ export function InstanceView({
                 </div>
               )}
 
+              {isRust ? (
+                <div className="rounded-[12px] border border-[#ededed]/[0.08] bg-[#19191b] p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[14px] font-medium text-[#ededed]">
+                        {t.horizonBuildTitle}
+                      </div>
+                      <div className="text-[12px] text-[#85858b] mt-0.5 leading-[16px]">
+                        {horizonStatus?.found
+                          ? `${horizonStatus.tag} · ${horizonStatus.prepared ? t.horizonPreparedYes : t.horizonPreparedNo}`
+                          : t.horizonBuildMissing}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={importingBuild}
+                      onClick={() => handlePickHorizonBuild(false)}
+                      className="mono-btn-secondary h-8 px-3 rounded-[8px] text-[12px] disabled:opacity-50"
+                    >
+                      {importingBuild ? t.horizonBuildImporting : t.horizonBuildPickFolder}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={importingBuild}
+                      onClick={() => handlePickHorizonBuild(true)}
+                      className="mono-btn-secondary h-8 px-3 rounded-[8px] text-[12px] disabled:opacity-50"
+                    >
+                      {t.horizonBuildPickZip}
+                    </button>
+                  </div>
+                  {horizonErr && <div className="text-[13px] text-[#e5484d]">{horizonErr}</div>}
+                </div>
+              ) : (
+                <>
               {/* Minecraft version + loader */}
               <div className="rounded-[12px] border border-[#ededed]/[0.08] bg-[#19191b] p-4 space-y-4">
                 <div>
@@ -1144,6 +1207,8 @@ export function InstanceView({
                   className="w-full"
                 />
               </div>
+                </>
+              )}
 
               {/* Game Window Size + Fullscreen */}
               <div>
@@ -1212,6 +1277,8 @@ export function InstanceView({
                 </div>
               </div>
 
+              {!isRust && (
+                <>
               {/* JVM Args + Presets */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -1263,6 +1330,8 @@ export function InstanceView({
                   className="w-full h-9 px-3 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.08] font-mono text-[13px] text-[#ededed] placeholder:text-[#85858b] focus:outline-none focus:border-[#ededed]/25"
                 />
               </div>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-3">

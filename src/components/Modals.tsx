@@ -3,12 +3,17 @@ import { Check, Copy, Download, ExternalLink, Loader2, Trash2, X } from "lucide-
 import type { Dict } from "../i18n";
 import { api } from "../lib/api";
 import { LoaderFields, loaderLabel } from "./LoaderFields";
+import { Select } from "./Select";
 import type {
   AccountsStore,
+  Edition,
+  HorizonBuildStatus,
   Instance,
   LoaderType,
   MsaDeviceCode,
 } from "../types";
+
+const RUST_MC_VERSION = "26.3";
 
 interface CreateInstanceModalProps {
   t: Dict;
@@ -27,13 +32,37 @@ export function CreateInstanceModal({
   onImportMrpack,
 }: CreateInstanceModalProps) {
   const [name, setName] = useState("");
+  const [edition, setEdition] = useState<Edition>("java");
+  const isRust = edition === "rust";
   const [mcVersion, setMcVersion] = useState("1.21.4");
   const [loader, setLoader] = useState<LoaderType>("fabric");
   const [loaderVersion, setLoaderVersion] = useState<string>("");
   const [customPath, setCustomPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [horizonStatus, setHorizonStatus] = useState<HorizonBuildStatus | null>(null);
+  const [importingBuild, setImportingBuild] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isRust) return;
+    api.getHorizonStatus().then(setHorizonStatus).catch(() => {});
+  }, [isRust]);
+
+  const handlePickHorizonBuild = async (archive: boolean) => {
+    setError(null);
+    const picked = await api.pickHorizonBuild(t.horizonBuildTitle, archive);
+    if (!picked) return;
+    setImportingBuild(true);
+    try {
+      const st = await api.importHorizonBuild(picked);
+      setHorizonStatus(st);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setImportingBuild(false);
+    }
+  };
 
   const handleImport = async () => {
     setImporting(true);
@@ -47,20 +76,21 @@ export function CreateInstanceModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loader === "custom" && !customPath) {
+    if (!isRust && loader === "custom" && !customPath) {
       setError(t.customLoaderNone);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const finalName = name.trim() || `${loaderLabel(loader, t)} ${mcVersion}`;
+      const finalName = name.trim() || (isRust ? `Rust ${RUST_MC_VERSION}` : `${loaderLabel(loader, t)} ${mcVersion}`);
       const inst = await api.createInstance({
         name: finalName,
-        mcVersion,
-        loader,
-        loaderVersion: loader === "vanilla" ? null : loaderVersion || null,
-        customLoaderPath: loader === "custom" ? customPath : null,
+        edition,
+        mcVersion: isRust ? RUST_MC_VERSION : mcVersion,
+        loader: isRust ? "vanilla" : loader,
+        loaderVersion: isRust || loader === "vanilla" ? null : loaderVersion || null,
+        customLoaderPath: !isRust && loader === "custom" ? customPath : null,
       });
       onCreated(inst);
     } catch (err) {
@@ -90,6 +120,25 @@ export function CreateInstanceModal({
           </button>
         </div>
 
+        <div className="grid grid-cols-2 gap-1 p-1 mb-4 rounded-[8px] bg-[#141415] border border-[#ededed]/[0.08]">
+          {(["java", "rust"] as Edition[]).map((id) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setEdition(id)}
+              className={`h-8 rounded-[6px] text-[13px] transition-colors duration-150 ${
+                edition === id
+                  ? "bg-[#232325] text-[#ededed] font-medium"
+                  : "text-[#85858b] hover:text-[#a1a1a6]"
+              }`}
+            >
+              {id === "java" ? t.editionJava : t.editionRust}
+            </button>
+          ))}
+        </div>
+
+        {!isRust && (
+          <>
         <button
           type="button"
           onClick={handleImport}
@@ -112,6 +161,8 @@ export function CreateInstanceModal({
           <span>{t.orCreateManually}</span>
           <span className="flex-1 h-px bg-[#ededed]/[0.08]" />
         </div>
+          </>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -126,6 +177,58 @@ export function CreateInstanceModal({
             />
           </div>
 
+          {isRust ? (
+            <>
+              <div>
+                <label className="block text-[13px] text-[#a1a1a6] mb-1.5">{t.version}</label>
+                <Select
+                  value={RUST_MC_VERSION}
+                  onChange={() => {}}
+                  mono
+                  className="w-full !bg-[#141415]"
+                  options={[{ value: RUST_MC_VERSION, label: `${RUST_MC_VERSION} (Horizon Nightly)` }]}
+                />
+              </div>
+              <div className="rounded-[8px] border border-[#ededed]/[0.1] bg-[#141415] px-3 py-2.5 text-[12px] leading-[17px] text-[#a1a1a6] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[#ededed] font-medium">{t.horizonBuildTitle}</span>
+                  {horizonStatus?.found && (
+                    <span className="font-mono text-[11px] text-[#85858b] truncate max-w-[190px]">
+                      {horizonStatus.tag}
+                    </span>
+                  )}
+                </div>
+                {horizonStatus?.found ? (
+                  <p className="text-[#30a46c]">
+                    {horizonStatus.prepared ? t.horizonPreparedYes : t.horizonPreparedNo}
+                  </p>
+                ) : (
+                  <p className="text-[#e5a000]">{t.horizonBuildMissing}</p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={importingBuild}
+                    onClick={() => handlePickHorizonBuild(false)}
+                    className="mono-btn-secondary h-7 px-2.5 rounded-[6px] text-[12px] disabled:opacity-50"
+                  >
+                    {importingBuild ? t.horizonBuildImporting : t.horizonBuildPickFolder}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={importingBuild}
+                    onClick={() => handlePickHorizonBuild(true)}
+                    className="mono-btn-secondary h-7 px-2.5 rounded-[6px] text-[12px] disabled:opacity-50"
+                  >
+                    {t.horizonBuildPickZip}
+                  </button>
+                </div>
+                <p>{t.rustNoteResources}</p>
+                <p>{t.rustNoteSteps}</p>
+                <p className="text-[#85858b]">{t.rustNoteUnofficial}</p>
+              </div>
+            </>
+          ) : (
           <LoaderFields
             t={t}
             showSnapshots={showSnapshots}
@@ -140,6 +243,7 @@ export function CreateInstanceModal({
             autoSelectLatest
             onError={setError}
           />
+          )}
 
           {error && <div className="text-[13px] text-[#e5484d]">{error}</div>}
 

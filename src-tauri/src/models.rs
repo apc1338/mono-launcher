@@ -50,6 +50,13 @@ pub struct Instance {
     pub sort_order: Option<i64>,
     #[serde(default)]
     pub icon_url: Option<String>,
+    /// "java" (default) or "rust" (Horizon, Minecraft Rust Edition).
+    #[serde(default = "default_edition")]
+    pub edition: String,
+}
+
+fn default_edition() -> String {
+    "java".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

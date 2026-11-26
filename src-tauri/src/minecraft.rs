@@ -20,7 +20,7 @@ use tokio::sync::Semaphore;
 
 pub type RunningMap = Arc<Mutex<HashMap<String, u32>>>;
 
-fn http_client() -> Result<Client, String> {
+pub(crate) fn http_client() -> Result<Client, String> {
     Client::builder()
         .user_agent("MonoLauncher/0.1.0")
         .build()
@@ -28,21 +28,21 @@ fn http_client() -> Result<Client, String> {
 }
 
 #[derive(Deserialize)]
-struct VersionManifest {
-    versions: Vec<ManifestVersion>,
+pub(crate) struct VersionManifest {
+    pub(crate) versions: Vec<ManifestVersion>,
 }
 
 #[derive(Deserialize)]
-struct ManifestVersion {
-    id: String,
+pub(crate) struct ManifestVersion {
+    pub(crate) id: String,
     #[serde(rename = "type")]
     version_type: String,
-    url: String,
+    pub(crate) url: String,
     #[serde(rename = "releaseTime")]
     release_time: String,
 }
 
-async fn get_version_manifest() -> Result<VersionManifest, String> {
+pub(crate) async fn get_version_manifest() -> Result<VersionManifest, String> {
     let client = http_client()?;
     let resp = client
         .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
@@ -184,7 +184,7 @@ fn sha1_matches(path: &Path, expected: Option<&str>) -> bool {
     hash.eq_ignore_ascii_case(exp)
 }
 
-async fn download_file(
+pub(crate) async fn download_file(
     client: &Client,
     url: &str,
     dest: &Path,
@@ -209,7 +209,7 @@ async fn download_file(
     Ok(())
 }
 
-fn rule_allows_windows(rules: Option<&Value>) -> bool {
+pub(crate) fn rule_allows_windows(rules: Option<&Value>) -> bool {
     let Some(arr) = rules.and_then(|r| r.as_array()) else {
         return true;
     };
@@ -308,7 +308,7 @@ fn maven_coords_to_path(coords: &str) -> Option<String> {
     Some(format!("{group}/{artifact}/{version}/{artifact}-{version}{classifier}.jar"))
 }
 
-fn emit_progress(app: &AppHandle, iid: &str, stage: &str, current: u64, total: u64, msg: &str) {
+pub(crate) fn emit_progress(app: &AppHandle, iid: &str, stage: &str, current: u64, total: u64, msg: &str) {
     let _ = app.emit(
         "launch-progress",
         LaunchProgressEvent {
@@ -321,7 +321,7 @@ fn emit_progress(app: &AppHandle, iid: &str, stage: &str, current: u64, total: u
     );
 }
 
-fn emit_status(app: &AppHandle, iid: &str, status: &str, exit_code: Option<i32>) {
+pub(crate) fn emit_status(app: &AppHandle, iid: &str, status: &str, exit_code: Option<i32>) {
     let _ = app.emit(
         "instance-status",
         InstanceStatusEvent {
@@ -332,7 +332,7 @@ fn emit_status(app: &AppHandle, iid: &str, status: &str, exit_code: Option<i32>)
     );
 }
 
-fn emit_log(app: &AppHandle, iid: &str, level: &str, text: String) {
+pub(crate) fn emit_log(app: &AppHandle, iid: &str, level: &str, text: String) {
     let _ = app.emit(
         "game-log",
         GameLogEvent {
@@ -387,6 +387,10 @@ pub async fn launch_instance(
         .into_iter()
         .find(|i| i.id == instance_id)
         .ok_or_else(|| "Instance not found".to_string())?;
+
+    if inst.edition == crate::horizon::RUST_EDITION {
+        return crate::horizon::launch(app, running, inst, quick_play_world).await;
+    }
 
     let accounts = storage::load_accounts();
     let raw_account = accounts

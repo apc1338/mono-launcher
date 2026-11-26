@@ -77,6 +77,21 @@ const ru = {
 
   // Create Instance Modal
   createTitle: "Новая сборка",
+  editionJava: "Java Edition",
+  editionRust: "Rust Edition",
+  rustNoteResources:
+    "Ресурсы Java Edition 26.3 и Java 25 скачаются автоматически от Mojang при первом запуске и будут подготовлены через horizon-prepare.",
+  rustNoteSteps:
+    "Сторонний лаунчер Horizon не нужен: если билд игры не найден на диске, просто укажи папку или .zip архив с билдом.",
+  rustNoteUnofficial:
+    "Неофициальный проект, не связан с Mojang и Microsoft. Моды Forge/Fabric не работают.",
+  horizonBuildTitle: "Билд игры Horizon",
+  horizonBuildMissing: "Билд не найден. Укажи папку с horizon-client.exe или .zip архив.",
+  horizonBuildPickFolder: "Выбрать папку",
+  horizonBuildPickZip: "Выбрать .zip",
+  horizonBuildImporting: "Импорт...",
+  horizonPreparedYes: "ресурсы 26.3 готовы",
+  horizonPreparedNo: "ресурсы 26.3 подготовятся при запуске",
   version: "Версия Minecraft",
   loader: "Загрузчик",
   loaderVersion: "Версия загрузчика",
@@ -315,6 +330,21 @@ const en: typeof ru = {
   deleteInstance: "Delete instance",
 
   createTitle: "New instance",
+  editionJava: "Java Edition",
+  editionRust: "Rust Edition",
+  rustNoteResources:
+    "Java Edition 26.3 resources and Java 25 will be downloaded automatically from Mojang on first launch and prepared via horizon-prepare.",
+  rustNoteSteps:
+    "No third-party Horizon launcher needed: if no game build is found on disk, pick a build folder or .zip archive.",
+  rustNoteUnofficial:
+    "Unofficial project, not affiliated with Mojang or Microsoft. Forge/Fabric mods do not work.",
+  horizonBuildTitle: "Horizon game build",
+  horizonBuildMissing: "Build not found. Pick a folder with horizon-client.exe or a .zip archive.",
+  horizonBuildPickFolder: "Pick folder",
+  horizonBuildPickZip: "Pick .zip",
+  horizonBuildImporting: "Importing...",
+  horizonPreparedYes: "26.3 resources ready",
+  horizonPreparedNo: "26.3 resources will be prepared on launch",
   version: "Minecraft version",
   loader: "Loader",
   loaderVersion: "Loader version",

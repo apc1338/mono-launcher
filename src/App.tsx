@@ -97,6 +97,7 @@ export default function App() {
 
   // Tauri event subscriptions
   useEffect(() => {
+    let cancelled = false;
     let unProgress: (() => void) | undefined;
     let unLog: (() => void) | undefined;
     let unStatus: (() => void) | undefined;
@@ -114,14 +115,20 @@ export default function App() {
           });
         }, 2500);
       }
-    }).then((u) => (unPack = u));
+    }).then((u) => {
+      if (cancelled) u();
+      else unPack = u;
+    });
 
     api.onLaunchProgress((ev) => {
       setProgressMap((prev) => ({
         ...prev,
         [ev.instanceId]: ev.stage === "done" ? null : ev,
       }));
-    }).then((u) => (unProgress = u));
+    }).then((u) => {
+      if (cancelled) u();
+      else unProgress = u;
+    });
 
     api.onGameLog((ev) => {
       setLogsMap((prev) => {
@@ -129,7 +136,10 @@ export default function App() {
         const next = list.length > 1500 ? [...list.slice(-1200), ev] : [...list, ev];
         return { ...prev, [ev.instanceId]: next };
       });
-    }).then((u) => (unLog = u));
+    }).then((u) => {
+      if (cancelled) u();
+      else unLog = u;
+    });
 
     api.onInstanceStatus((ev) => {
       setStatuses((prev) => ({ ...prev, [ev.instanceId]: ev.status }));
@@ -148,9 +158,13 @@ export default function App() {
         }
         api.listInstances().then(setInstances).catch(() => {});
       }
-    }).then((u) => (unStatus = u));
+    }).then((u) => {
+      if (cancelled) u();
+      else unStatus = u;
+    });
 
     return () => {
+      cancelled = true;
       unProgress?.();
       unLog?.();
       unStatus?.();

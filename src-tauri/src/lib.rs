@@ -1,6 +1,7 @@
 mod auth;
 mod curseforge;
 mod extras;
+mod horizon;
 mod java;
 mod minecraft;
 mod models;
@@ -176,7 +177,14 @@ fn create_instance(
     loader_version: Option<String>,
     ram_mb: Option<u32>,
     custom_loader_path: Option<String>,
+    edition: Option<String>,
 ) -> Result<Instance, String> {
+    let is_rust = edition.as_deref() == Some(horizon::RUST_EDITION);
+    let (mc_version, loader, loader_version) = if is_rust {
+        (horizon::HORIZON_MC_VERSION.to_string(), LoaderType::Vanilla, None)
+    } else {
+        (mc_version, loader, loader_version)
+    };
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Instance name cannot be empty".into());
@@ -209,6 +217,7 @@ fn create_instance(
         favorite: false,
         sort_order: None,
         icon_url: None,
+        edition: if is_rust { horizon::RUST_EDITION } else { "java" }.to_string(),
     };
     storage::save_instance(&inst)?;
     Ok(inst)
@@ -598,6 +607,18 @@ fn delete_screenshot(instance_id: String, filename: String) -> Result<(), String
     extras::delete_screenshot(&instance_id, &filename)
 }
 
+#[tauri::command]
+fn get_horizon_status() -> horizon::HorizonBuildStatus {
+    horizon::get_status()
+}
+
+#[tauri::command]
+async fn import_horizon_build(path: String) -> Result<horizon::HorizonBuildStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || horizon::import_build(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -655,6 +676,8 @@ pub fn run() {
             list_worlds,
             open_world_folder,
             delete_world,
+            get_horizon_status,
+            import_horizon_build,
             list_screenshots,
             get_screenshot_data,
             open_screenshot,

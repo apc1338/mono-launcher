@@ -21,6 +21,17 @@ export interface Instance {
   favorite: boolean;
   sortOrder?: number | null;
   iconUrl?: string | null;
+  /** "java" (default) or "rust" (Horizon). Missing = java. */
+  edition?: Edition;
+}
+
+export type Edition = "java" | "rust";
+
+export interface HorizonBuildStatus {
+  found: boolean;
+  tag: string | null;
+  path: string | null;
+  prepared: boolean;
 }
 
 export interface Account {

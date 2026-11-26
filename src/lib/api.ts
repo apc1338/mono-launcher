@@ -11,6 +11,7 @@ import type {
   ContentUpdate,
   DetectedJava,
   GameLogEvent,
+  HorizonBuildStatus,
   InstalledContent,
   InstallResult,
   Instance,
@@ -292,8 +293,29 @@ export const api = {
     loaderVersion: string | null;
     ramMb?: number;
     customLoaderPath?: string | null;
+    edition?: "java" | "rust";
   }): Promise<Instance> {
     return invoke<Instance>("create_instance", params);
+  },
+
+  async getHorizonStatus(): Promise<HorizonBuildStatus> {
+    if (!isTauri()) return { found: false, tag: null, path: null, prepared: false };
+    return invoke<HorizonBuildStatus>("get_horizon_status");
+  },
+
+  async importHorizonBuild(path: string): Promise<HorizonBuildStatus> {
+    return invoke<HorizonBuildStatus>("import_horizon_build", { path });
+  },
+
+  async pickHorizonBuild(title: string, archive: boolean): Promise<string | null> {
+    if (!isTauri()) return null;
+    const picked = await open({
+      title,
+      directory: !archive,
+      multiple: false,
+      filters: archive ? [{ name: "Zip", extensions: ["zip"] }] : undefined,
+    });
+    return typeof picked === "string" ? picked : null;
   },
 
   async updateInstance(
