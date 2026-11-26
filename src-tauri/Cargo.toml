@@ -1,6 +1,6 @@
 [package]
 name = "mono-launcher"
-version = "0.1.6"
+version = "0.1.7"
 description = "Mono — minimalist Minecraft launcher"
 authors = ["Mono"]
 edition = "2021"
