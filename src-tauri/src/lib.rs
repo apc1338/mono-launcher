@@ -8,13 +8,14 @@ mod models;
 mod modrinth;
 mod packs;
 mod storage;
+mod updater;
 
 use chrono::Utc;
 use minecraft::RunningMap;
 use models::{
     AccountsStore, BatchResolveItem, CatalogSearchResponse, CatalogVersion, ContentUpdate,
-    InstallResult, InstalledContent, Instance, LauncherSettings, LoaderType, McVersionInfo,
-    MsaDeviceCode, ResolvedBatchFile, ScreenshotInfo, SystemInfo, WorldInfo,
+    InstallResult, InstalledContent, Instance, LauncherSettings, LauncherUpdateInfo, LoaderType,
+    McVersionInfo, MsaDeviceCode, ResolvedBatchFile, ScreenshotInfo, SystemInfo, WorldInfo,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -862,6 +863,16 @@ async fn import_horizon_build(path: String) -> Result<horizon::HorizonBuildStatu
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn check_launcher_update() -> Result<Option<LauncherUpdateInfo>, String> {
+    updater::check_for_update().await
+}
+
+#[tauri::command]
+async fn install_launcher_update(app: AppHandle, download_url: String) -> Result<(), String> {
+    updater::download_and_apply_update(app, download_url).await
+}
+
 #[cfg(target_os = "windows")]
 fn apply_native_titlebar_style(window: &tauri::WebviewWindow) {
     use std::ffi::c_void;
@@ -992,6 +1003,8 @@ pub fn run() {
             open_screenshot,
             open_screenshots_folder,
             delete_screenshot,
+            check_launcher_update,
+            install_launcher_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Mono launcher");

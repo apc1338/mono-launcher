@@ -259,3 +259,20 @@ export interface ScreenshotInfo {
   modifiedAt: string | null;
   sizeBytes: number;
 }
+
+export interface LauncherUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  releaseName: string;
+  notes: string;
+  releaseUrl: string;
+  downloadUrl: string;
+  assetName: string;
+  assetSize: number;
+}
+
+export interface LauncherUpdateProgressEvent {
+  stage: "downloading" | "applying" | string;
+  downloaded: number;
+  total: number;
+}

@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { Download, FolderOpen, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Download, FolderOpen, RefreshCw, Trash2 } from "lucide-react";
 import type { Dict } from "../i18n";
 import { api } from "../lib/api";
 import { Select } from "./Select";
-import type { Language, LauncherSettings, SystemInfo } from "../types";
+import type { Language, LauncherSettings, LauncherUpdateInfo, SystemInfo } from "../types";
 
 interface SettingsViewProps {
   t: Dict;
@@ -11,6 +11,7 @@ interface SettingsViewProps {
   systemInfo: SystemInfo;
   onSaveSettings: (s: LauncherSettings) => Promise<void>;
   onRefreshSystemInfo: () => Promise<void>;
+  onUpdateFound: (info: LauncherUpdateInfo) => void;
 }
 
 export function SettingsView({
@@ -19,6 +20,7 @@ export function SettingsView({
   systemInfo,
   onSaveSettings,
   onRefreshSystemInfo,
+  onUpdateFound,
 }: SettingsViewProps) {
   const [draft, setDraft] = useState<LauncherSettings>(settings);
   const [ramInput, setRamInput] = useState(String(settings.defaultRamMb));
@@ -26,6 +28,31 @@ export function SettingsView({
   const [javaError, setJavaError] = useState<{ major: number; msg: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const [cacheMsg, setCacheMsg] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [upToDateMsg, setUpToDateMsg] = useState(false);
+
+  useEffect(() => {
+    api.getLauncherVersion().then(setAppVersion).catch(() => {});
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpToDateMsg(false);
+    try {
+      const info = await api.checkLauncherUpdate();
+      if (info) {
+        onUpdateFound(info);
+      } else {
+        setUpToDateMsg(true);
+        setTimeout(() => setUpToDateMsg(false), 2500);
+      }
+    } catch {
+      // ignore network error
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const maxRam = Math.max(4096, Math.min(32768, Math.floor(systemInfo.totalRamMb / 1024) * 1024));
 
@@ -449,6 +476,36 @@ export function SettingsView({
                 );
               })}
             </div>
+          </section>
+
+          {/* Launcher version & manual update check */}
+          <section className="pt-6 border-t border-[#ededed]/[0.08] flex items-center justify-between gap-4 pb-2">
+            <div className="flex items-baseline gap-2.5">
+              <span className="text-[14px] font-medium text-[#ededed]">Mono</span>
+              {appVersion && (
+                <span className="font-mono text-[12px] text-[#85858b]">v{appVersion}</span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              disabled={checkingUpdate}
+              onClick={handleCheckUpdate}
+              className="mono-btn-secondary h-8 px-3 rounded-[8px] flex items-center gap-1.5 text-[13px] disabled:opacity-50"
+            >
+              <RefreshCw
+                size={13}
+                strokeWidth={1.5}
+                className={`text-[#a1a1a6] ${checkingUpdate ? "animate-spin" : ""}`}
+              />
+              <span>
+                {checkingUpdate
+                  ? t.checkingUpdates
+                  : upToDateMsg
+                    ? t.noUpdatesFound
+                    : t.checkUpdates}
+              </span>
+            </button>
           </section>
         </div>
       </div>

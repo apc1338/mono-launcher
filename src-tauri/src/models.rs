@@ -327,3 +327,24 @@ pub struct ScreenshotInfo {
     pub modified_at: Option<String>,
     pub size_bytes: u64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub release_name: String,
+    pub notes: String,
+    pub release_url: String,
+    pub download_url: String,
+    pub asset_name: String,
+    pub asset_size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherUpdateProgressEvent {
+    pub stage: String,
+    pub downloaded: u64,
+    pub total: u64,
+}

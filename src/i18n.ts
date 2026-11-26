@@ -291,6 +291,14 @@ const ru = {
   batchInstallingProgress: "Установка {current} из {total}…",
   batchNothingToInstall: "Нет файлов для установки",
 
+  // Launcher self-update
+  launcherUpdateTitle: "Доступно обновление",
+  launcherUpdateSubtitle: "Новая версия Mono готова к установке и заменит текущий файл лаунчера.",
+  launcherUpdateInstall: "Обновить и перезапустить",
+  launcherUpdateDownloading: "Скачивание обновления…",
+  launcherUpdateApplying: "Применение и перезапуск…",
+  launcherUpdateReleasePage: "Открыть на GitHub",
+
   // Empty state
   selectOrCreate: "Выбери сборку слева или создай новую",
   createFirst: "Создать первую сборку",
@@ -575,6 +583,13 @@ const en: typeof ru = {
   batchInstallBtn: "Install ({count})",
   batchInstallingProgress: "Installing {current} of {total}…",
   batchNothingToInstall: "No files to install",
+
+  launcherUpdateTitle: "Update available",
+  launcherUpdateSubtitle: "A new version of Mono is ready and will replace the current launcher executable.",
+  launcherUpdateInstall: "Update & restart",
+  launcherUpdateDownloading: "Downloading update…",
+  launcherUpdateApplying: "Applying and restarting…",
+  launcherUpdateReleasePage: "View on GitHub",
 
   selectOrCreate: "Select an instance on the left or create a new one",
   createFirst: "Create first instance",

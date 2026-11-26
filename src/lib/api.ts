@@ -3,6 +3,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import type {
   AccountsStore,
   BatchResolveItem,
@@ -18,6 +19,8 @@ import type {
   Instance,
   InstanceStatusEvent,
   LauncherSettings,
+  LauncherUpdateInfo,
+  LauncherUpdateProgressEvent,
   LaunchProgressEvent,
   LoaderType,
   McVersionInfo,
@@ -738,6 +741,28 @@ export const api = {
   async onInstanceStatus(cb: (e: InstanceStatusEvent) => void): Promise<UnlistenFn> {
     if (!isTauri()) return () => {};
     return listen<InstanceStatusEvent>("instance-status", (ev) => cb(ev.payload));
+  },
+
+  async getLauncherVersion(): Promise<string> {
+    if (!isTauri()) return "0.1.5";
+    return getVersion();
+  },
+
+  async checkLauncherUpdate(): Promise<LauncherUpdateInfo | null> {
+    if (!isTauri()) return null;
+    return invoke<LauncherUpdateInfo | null>("check_launcher_update");
+  },
+
+  async installLauncherUpdate(downloadUrl: string): Promise<void> {
+    if (!isTauri()) return;
+    return invoke("install_launcher_update", { downloadUrl });
+  },
+
+  async onLauncherUpdateProgress(
+    cb: (e: LauncherUpdateProgressEvent) => void
+  ): Promise<UnlistenFn> {
+    if (!isTauri()) return () => {};
+    return listen<LauncherUpdateProgressEvent>("launcher-update-progress", (ev) => cb(ev.payload));
   },
 
   window: {
