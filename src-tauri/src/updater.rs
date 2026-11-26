@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 
 const REPO_OWNER: &str = "apc1338";
@@ -82,6 +83,22 @@ fn pick_windows_exe(assets: &[GhAsset]) -> Option<&GhAsset> {
         .or_else(|| exes.first().copied())
 }
 
+fn append_suffix(path: &std::path::Path, suffix: &str) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
+/// Removes leftover `.old` / `.new` files from a previous self-update.
+pub fn cleanup_old_exe() {
+    if let Ok(cur) = std::env::current_exe() {
+        let _ = fs::remove_file(append_suffix(&cur, ".old"));
+        let _ = fs::remove_file(append_suffix(&cur, ".new"));
+        // Also clean legacy `.exe.new` if left behind
+        let _ = fs::remove_file(cur.with_extension("exe.new"));
+    }
+}
+
 pub async fn check_for_update() -> Result<Option<LauncherUpdateInfo>, String> {
     let client = updater_client()?;
     let url = format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest");
@@ -141,21 +158,8 @@ pub async fn download_and_apply_update(
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Cannot resolve current executable path: {e}"))?;
 
-    let staged_path = {
-        let next_beside = current_exe.with_extension("exe.new");
-        // Verify we can write beside the current executable; otherwise stage in temp dir
-        if fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&next_beside)
-            .is_ok()
-        {
-            next_beside
-        } else {
-            std::env::temp_dir().join(format!("mono-launcher-update-{}.exe", std::process::id()))
-        }
-    };
+    let staged_path = append_suffix(&current_exe, ".new");
+    let backup_path = append_suffix(&current_exe, ".old");
 
     let _ = app.emit(
         "launcher-update-progress",
@@ -179,7 +183,7 @@ pub async fn download_and_apply_update(
 
     let total = resp.content_length().unwrap_or(0);
     let mut file = fs::File::create(&staged_path)
-        .map_err(|e| format!("Cannot create update file: {e}"))?;
+        .map_err(|e| format!("Cannot write update file next to launcher: {e}"))?;
     let mut stream = resp.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut last_emit: u64 = 0;
@@ -227,49 +231,22 @@ pub async fn download_and_apply_update(
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
+        // Windows allows renaming a running executable in-place.
+        // Rename current -> .old, move .new -> current, spawn updated exe, exit current.
+        let _ = fs::remove_file(&backup_path);
+        fs::rename(&current_exe, &backup_path)
+            .map_err(|e| format!("Failed moving current executable: {e}"))?;
 
-        let pid = std::process::id();
-        let script_path = std::env::temp_dir().join(format!("mono-update-{pid}.cmd"));
-        let src_str = staged_path.to_string_lossy();
-        let dst_str = current_exe.to_string_lossy();
+        if let Err(e) = fs::rename(&staged_path, &current_exe) {
+            // Roll back so the user is never left without the executable
+            let _ = fs::rename(&backup_path, &current_exe);
+            let _ = fs::remove_file(&staged_path);
+            return Err(format!("Failed placing updated executable: {e}"));
+        }
 
-        let script = format!(
-            "@echo off\r\n\
-             chcp 65001 >nul\r\n\
-             set \"PID={pid}\"\r\n\
-             set \"SRC={src_str}\"\r\n\
-             set \"DST={dst_str}\"\r\n\
-             set /a TRIES=0\r\n\
-             :wait\r\n\
-             tasklist /FI \"PID eq %PID%\" 2>nul | find \"%PID%\" >nul\r\n\
-             if not errorlevel 1 (\r\n\
-               set /a TRIES+=1\r\n\
-               if %TRIES% GEQ 30 goto replace\r\n\
-               timeout /t 1 /nobreak >nul\r\n\
-               goto wait\r\n\
-             )\r\n\
-             :replace\r\n\
-             move /Y \"%SRC%\" \"%DST%\" >nul 2>&1\r\n\
-             if errorlevel 1 (\r\n\
-               copy /Y \"%SRC%\" \"%DST%\" >nul 2>&1\r\n\
-               del /F /Q \"%SRC%\" >nul 2>&1\r\n\
-             )\r\n\
-             start \"\" \"%DST%\"\r\n\
-             del /F /Q \"%~f0\" >nul 2>&1\r\n"
-        );
-
-        fs::write(&script_path, script.as_bytes())
-            .map_err(|e| format!("Failed creating updater script: {e}"))?;
-
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-
-        std::process::Command::new("cmd.exe")
-            .args(["/C", &script_path.to_string_lossy()])
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        std::process::Command::new(&current_exe)
             .spawn()
-            .map_err(|e| format!("Failed starting updater helper: {e}"))?;
+            .map_err(|e| format!("Failed launching updated executable: {e}"))?;
 
         app.exit(0);
     }

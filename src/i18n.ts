@@ -294,6 +294,8 @@ const ru = {
 
   // Launcher self-update
   launcherUpdateTitle: "Доступно обновление",
+  launcherUpdateShort: "Обновление",
+  launcherUpdateBtn: "Обновить",
   launcherUpdateSubtitle: "Новая версия Mono готова к установке и заменит текущий файл лаунчера.",
   launcherUpdateInstall: "Обновить и перезапустить",
   launcherUpdateDownloading: "Скачивание обновления…",
@@ -587,6 +589,8 @@ const en: typeof ru = {
   batchNothingToInstall: "No files to install",
 
   launcherUpdateTitle: "Update available",
+  launcherUpdateShort: "Update",
+  launcherUpdateBtn: "Update",
   launcherUpdateSubtitle: "A new version of Mono is ready and will replace the current launcher executable.",
   launcherUpdateInstall: "Update & restart",
   launcherUpdateDownloading: "Downloading update…",

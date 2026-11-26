@@ -923,6 +923,7 @@ fn apply_native_titlebar_style(window: &tauri::WebviewWindow) {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            updater::cleanup_old_exe();
             #[cfg(target_os = "windows")]
             {
                 use tauri::Manager;

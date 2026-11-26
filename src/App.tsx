@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, ExternalLink, Loader2, Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   ActiveView,
   Sidebar,
@@ -415,6 +415,26 @@ export default function App() {
               setBannerError(String(err));
             }
           }}
+          updateInfo={updateInfo}
+          updateBusy={updateBusy}
+          updateProgress={updateProgress}
+          updateError={updateError}
+          onInstallUpdate={async () => {
+            if (!updateInfo) return;
+            setUpdateBusy(true);
+            setUpdateError(null);
+            setUpdateProgress(null);
+            try {
+              await api.installLauncherUpdate(updateInfo.downloadUrl);
+            } catch (err) {
+              setUpdateError(String(err));
+              setUpdateBusy(false);
+            }
+          }}
+          onDismissUpdate={() => {
+            setUpdateInfo(null);
+            setUpdateError(null);
+          }}
         />
 
         <main className="flex-1 flex min-w-0 min-h-0">
@@ -637,143 +657,6 @@ export default function App() {
           })
         }
       />
-
-      {updateInfo && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-4 mono-backdrop-enter"
-          onClick={() => !updateBusy && setUpdateInfo(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-[16px] bg-[#19191b] border border-[#ededed]/[0.1] p-6 mono-modal-enter"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-[18px] font-medium text-[#ededed]">
-                  {t.launcherUpdateTitle}
-                </h2>
-                <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-[#85858b]">
-                  <span>v{updateInfo.currentVersion}</span>
-                  <span>→</span>
-                  <span className="text-[#4cc38a] font-medium">v{updateInfo.latestVersion}</span>
-                  {updateInfo.assetSize > 0 && (
-                    <>
-                      <span className="text-[#ededed]/20">·</span>
-                      <span>{(updateInfo.assetSize / (1024 * 1024)).toFixed(1)} MB</span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={updateBusy}
-                onClick={() => setUpdateInfo(null)}
-                className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#85858b] hover:text-[#ededed] hover:bg-[#ededed]/[0.06] disabled:opacity-40"
-              >
-                <X size={16} strokeWidth={1.5} />
-              </button>
-            </div>
-
-            <p className="mt-3 text-[13px] text-[#a1a1a6] leading-5">
-              {t.launcherUpdateSubtitle}
-            </p>
-
-            {updateInfo.notes.trim() && (
-              <div className="mt-3 max-h-40 overflow-y-auto rounded-[10px] bg-[#141415] border border-[#ededed]/[0.08] p-3 text-[12px] text-[#a1a1a6] whitespace-pre-wrap leading-5">
-                {updateInfo.notes.trim()}
-              </div>
-            )}
-
-            {updateBusy && (
-              <div className="mt-4">
-                <div className="flex items-center justify-between text-[12px] text-[#a1a1a6] mb-1.5">
-                  <span className="inline-flex items-center gap-1.5">
-                    <Loader2 size={13} strokeWidth={1.75} className="animate-spin" />
-                    <span>
-                      {updateProgress?.stage === "applying"
-                        ? t.launcherUpdateApplying
-                        : t.launcherUpdateDownloading}
-                    </span>
-                  </span>
-                  {updateProgress && updateProgress.total > 0 && (
-                    <span className="font-mono text-[#85858b]">
-                      {Math.min(
-                        100,
-                        Math.round((updateProgress.downloaded / updateProgress.total) * 100)
-                      )}
-                      %
-                    </span>
-                  )}
-                </div>
-                <div className="h-1 w-full bg-[#ededed]/[0.08] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#ededed] transition-[width] duration-150"
-                    style={{
-                      width: `${
-                        updateProgress && updateProgress.total > 0
-                          ? Math.max(
-                              4,
-                              Math.min(
-                                100,
-                                Math.round((updateProgress.downloaded / updateProgress.total) * 100)
-                              )
-                            )
-                          : 15
-                      }%`,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {updateError && (
-              <div className="mt-3 text-[13px] text-[#e5484d]">{updateError}</div>
-            )}
-
-            <div className="mt-5 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                disabled={updateBusy}
-                onClick={() => api.openExternalUrl(updateInfo.releaseUrl)}
-                className="mono-btn-secondary h-9 px-3 rounded-[8px] text-[12px] inline-flex items-center gap-1.5 text-[#a1a1a6] hover:text-[#ededed] disabled:opacity-40"
-              >
-                <ExternalLink size={13} strokeWidth={1.5} />
-                <span>{t.launcherUpdateReleasePage}</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={updateBusy}
-                  onClick={() => setUpdateInfo(null)}
-                  className="mono-btn-secondary h-9 px-3.5 rounded-[8px] text-[13px] disabled:opacity-40"
-                >
-                  {t.pendingSkip}
-                </button>
-                <button
-                  type="button"
-                  disabled={updateBusy}
-                  onClick={async () => {
-                    setUpdateBusy(true);
-                    setUpdateError(null);
-                    setUpdateProgress(null);
-                    try {
-                      await api.installLauncherUpdate(updateInfo.downloadUrl);
-                    } catch (err) {
-                      setUpdateError(String(err));
-                      setUpdateBusy(false);
-                    }
-                  }}
-                  className="mono-btn-primary h-9 px-4 rounded-[8px] text-[13px] font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Download size={14} strokeWidth={1.6} />
-                  <span>{t.launcherUpdateInstall}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

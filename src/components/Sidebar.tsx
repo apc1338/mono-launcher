@@ -3,9 +3,11 @@ import { createPortal } from "react-dom";
 import {
   Compass,
   CopyPlus,
+  Download,
   FolderOpen,
   Home,
   LayoutGrid,
+  Loader2,
   Pencil,
   Play,
   Plus,
@@ -15,9 +17,16 @@ import {
   Star,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import type { Dict } from "../i18n";
-import type { Account, Instance, InstanceRuntimeStatus } from "../types";
+import type {
+  Account,
+  Instance,
+  InstanceRuntimeStatus,
+  LauncherUpdateInfo,
+  LauncherUpdateProgressEvent,
+} from "../types";
 
 export const SIDEBAR_COMPACT_WIDTH = 68;
 export const SIDEBAR_DEFAULT_WIDTH = 256;
@@ -57,6 +66,12 @@ interface SidebarProps {
   onOpenInstanceFolder: (id: string) => void;
   onDeleteInstance: (id: string) => void;
   onReorderGroup: (group: InstanceGroup, orderedIds: string[]) => void;
+  updateInfo: LauncherUpdateInfo | null;
+  updateBusy: boolean;
+  updateProgress: LauncherUpdateProgressEvent | null;
+  updateError: string | null;
+  onInstallUpdate: () => void;
+  onDismissUpdate: () => void;
 }
 
 function formatLoader(inst: Instance): string {
@@ -100,6 +115,12 @@ export function Sidebar({
   onOpenInstanceFolder,
   onDeleteInstance,
   onReorderGroup,
+  updateInfo,
+  updateBusy,
+  updateProgress,
+  updateError,
+  onInstallUpdate,
+  onDismissUpdate,
 }: SidebarProps) {
   const isHome = activeView.type === "home";
   const isAllInstances = activeView.type === "instances";
@@ -694,6 +715,114 @@ export function Sidebar({
           </div>
         )}
       </div>
+
+      {/* Compact or full launcher update banner above account bar */}
+      {updateInfo &&
+        (() => {
+          const pct =
+            updateProgress && updateProgress.total > 0
+              ? Math.min(100, Math.round((updateProgress.downloaded / updateProgress.total) * 100))
+              : null;
+          if (isCompact) {
+            return (
+              <div className="px-2.5 pb-2 flex justify-center">
+                <button
+                  type="button"
+                  disabled={updateBusy}
+                  onClick={onInstallUpdate}
+                  onMouseEnter={(e) =>
+                    showTooltip(
+                      e.currentTarget,
+                      `${t.launcherUpdateShort} v${updateInfo.latestVersion}`,
+                      updateBusy
+                        ? pct !== null
+                          ? `${pct}%`
+                          : t.launcherUpdateDownloading
+                        : t.launcherUpdateBtn
+                    )
+                  }
+                  onMouseLeave={hideTooltip}
+                  className="relative w-10 h-9 rounded-[8px] bg-[#19191b] border border-[#ededed]/[0.1] hover:border-[#ededed]/[0.2] flex items-center justify-center text-[#ededed] transition-colors disabled:opacity-60"
+                >
+                  {updateBusy ? (
+                    <Loader2 size={15} strokeWidth={1.75} className="animate-spin text-[#4cc38a]" />
+                  ) : (
+                    <Download size={15} strokeWidth={1.6} className="text-[#ededed]" />
+                  )}
+                  {!updateBusy && (
+                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#4cc38a]" />
+                  )}
+                </button>
+              </div>
+            );
+          }
+
+          return (
+            <div className="px-3 pb-2.5">
+              <div className="rounded-[10px] bg-[#19191b] border border-[#ededed]/[0.1] p-2.5 space-y-2">
+                <div className="flex items-center justify-between gap-1.5 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#4cc38a] shrink-0" />
+                    <span className="text-[12px] font-medium text-[#ededed] truncate">
+                      {t.launcherUpdateShort}
+                    </span>
+                    <span className="font-mono text-[11px] text-[#4cc38a] shrink-0">
+                      v{updateInfo.latestVersion}
+                    </span>
+                  </div>
+                  {!updateBusy && (
+                    <button
+                      type="button"
+                      onClick={onDismissUpdate}
+                      className="w-5 h-5 rounded-[5px] flex items-center justify-center text-[#85858b] hover:text-[#ededed] hover:bg-[#ededed]/[0.06] shrink-0"
+                    >
+                      <X size={12} strokeWidth={1.6} />
+                    </button>
+                  )}
+                </div>
+
+                {updateBusy ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-[#a1a1a6]">
+                      <span className="inline-flex items-center gap-1.5 min-w-0 truncate">
+                        <Loader2 size={11} strokeWidth={1.75} className="animate-spin shrink-0" />
+                        <span className="truncate">
+                          {updateProgress?.stage === "applying"
+                            ? t.launcherUpdateApplying
+                            : t.launcherUpdateDownloading}
+                        </span>
+                      </span>
+                      {pct !== null && (
+                        <span className="font-mono text-[#85858b] shrink-0">{pct}%</span>
+                      )}
+                    </div>
+                    <div className="h-1 w-full bg-[#ededed]/[0.08] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[#4cc38a] transition-[width] duration-150"
+                        style={{ width: `${pct !== null ? Math.max(6, pct) : 20}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onInstallUpdate}
+                    className="mono-btn-primary w-full h-7 px-2.5 rounded-[6px] text-[12px] font-medium flex items-center justify-center gap-1.5"
+                  >
+                    <Download size={12} strokeWidth={1.75} className="shrink-0" />
+                    <span className="truncate">{t.launcherUpdateBtn}</span>
+                  </button>
+                )}
+
+                {updateError && (
+                  <div className="text-[11px] text-[#e5484d] leading-4 break-words">
+                    {updateError}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
       {/* Bottom account + settings bar */}
       <div
