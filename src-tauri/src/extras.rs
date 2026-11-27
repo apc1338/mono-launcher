@@ -122,6 +122,10 @@ pub fn set_instance_icon(instance_id: &str, image_path: Option<&str>) -> Result<
 pub fn add_local_content(instance_id: &str, kind: &str, paths: &[String]) -> Result<u32, String> {
     let dest_dir = storage::instance_game_dir(instance_id).join(storage::content_subfolder(kind));
     fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let is_rust = storage::load_instances()
+        .into_iter()
+        .find(|i| i.id == instance_id)
+        .is_some_and(|i| i.edition == crate::horizon::RUST_EDITION);
     let mut added = 0u32;
 
     for raw in paths {
@@ -134,6 +138,7 @@ pub fn add_local_content(instance_id: &str, kind: &str, paths: &[String]) -> Res
         };
         let low = fname.to_lowercase();
         let valid = match kind {
+            "mod" if is_rust => low.ends_with(".hmod"),
             "mod" => low.ends_with(".jar"),
             _ => low.ends_with(".zip") || low.ends_with(".jar"),
         };
@@ -463,6 +468,7 @@ fn read_level_dat_name(level_dat: &Path) -> Option<String> {
 }
 
 pub fn list_worlds(instance_id: &str) -> Vec<WorldInfo> {
+    crate::horizon::migrate_legacy_horizon_dir(instance_id);
     let saves_dir = storage::instance_game_dir(instance_id).join("saves");
     let Ok(entries) = fs::read_dir(saves_dir) else {
         return Vec::new();
@@ -539,6 +545,7 @@ pub fn delete_world(instance_id: &str, folder_name: &str) -> Result<(), String> 
 // ---------------------------------------------------------------------------
 
 pub fn list_screenshots(instance_id: &str) -> Vec<ScreenshotInfo> {
+    crate::horizon::migrate_legacy_horizon_dir(instance_id);
     let dir = storage::instance_game_dir(instance_id).join("screenshots");
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();

@@ -277,3 +277,8 @@ export interface LauncherUpdateProgressEvent {
   downloaded: number;
   total: number;
 }
+
+export interface DownloadProgressPayload {
+  downloaded: number;
+  total: number;
+}

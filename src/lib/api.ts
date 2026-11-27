@@ -12,6 +12,7 @@ import type {
   CatalogVersion,
   ContentUpdate,
   DetectedJava,
+  DownloadProgressPayload,
   GameLogEvent,
   HorizonBuildStatus,
   InstalledContent,
@@ -311,6 +312,34 @@ export const api = {
     return invoke<HorizonBuildStatus>("import_horizon_build", { path });
   },
 
+  async downloadLatestHorizonBuild(): Promise<HorizonBuildStatus> {
+    if (!isTauri()) {
+      return { found: false, tag: null, path: null, prepared: false };
+    }
+    return invoke<HorizonBuildStatus>("download_latest_horizon_build");
+  },
+
+  async launchHorizon(params: {
+    clientPath: string;
+    assetsDir: string;
+    accessToken: string;
+    uuid: string;
+  }): Promise<number> {
+    return invoke<number>("launch_horizon", params);
+  },
+
+  async downloadClient(url: string, destPath: string): Promise<void> {
+    if (!isTauri()) return;
+    return invoke<void>("download_client", { url, destPath });
+  },
+
+  async onDownloadProgress(
+    cb: (e: DownloadProgressPayload) => void
+  ): Promise<UnlistenFn> {
+    if (!isTauri()) return () => {};
+    return listen<DownloadProgressPayload>("download-progress", (ev) => cb(ev.payload));
+  },
+
   async pickHorizonBuild(title: string, archive: boolean): Promise<string | null> {
     if (!isTauri()) return null;
     const picked = await open({
@@ -383,15 +412,19 @@ export const api = {
   async pickAndAddLocalContent(
     instanceId: string,
     kind: "mod" | "resourcepack" | "shaderpack",
-    title: string
+    title: string,
+    isRust = false
   ): Promise<number> {
     if (!isTauri()) return 0;
-    const extensions = kind === "mod" ? ["jar"] : ["zip", "jar"];
+    const extensions =
+      kind === "mod" ? (isRust ? ["hmod"] : ["jar"]) : ["zip", "jar"];
+    const filterName =
+      kind === "mod" && isRust ? "Horizon mods (.hmod)" : "Minecraft content";
     const selected = await open({
       multiple: true,
       directory: false,
       title,
-      filters: [{ name: "Minecraft content", extensions }],
+      filters: [{ name: filterName, extensions }],
     });
     if (!selected) return 0;
     const paths = Array.isArray(selected) ? selected : [selected];

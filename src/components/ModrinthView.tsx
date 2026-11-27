@@ -96,7 +96,7 @@ export function ModrinthView({
   const [batchError, setBatchError] = useState<string | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const disallowsRust = kind === "mod" || kind === "shader";
+  const disallowsRust = kind === "mod";
   const availableInstances = disallowsRust
     ? instances.filter((i) => i.edition !== "rust")
     : instances;

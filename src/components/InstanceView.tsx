@@ -143,7 +143,7 @@ export function InstanceView({
   onModpackSwitched,
 }: InstanceViewProps) {
   const isRust = instance.edition === "rust";
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? (isRust ? "console" : "mod"));
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? "mod");
   const [content, setContent] = useState<InstalledContent[]>([]);
   const [filter, setFilter] = useState("");
   const [contentSort, setContentSort] = useState<ContentSort>("name-asc");
@@ -191,11 +191,56 @@ export function InstanceView({
   const [horizonStatus, setHorizonStatus] = useState<HorizonBuildStatus | null>(null);
   const [importingBuild, setImportingBuild] = useState(false);
   const [horizonErr, setHorizonErr] = useState<string | null>(null);
+  const [clientDownloading, setClientDownloading] = useState(false);
+  const [clientDownloadPercent, setClientDownloadPercent] = useState(0);
+  const autoDownloadUnlistenRef = useRef<(() => void) | null>(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
     if (!isRust) return;
     api.getHorizonStatus().then(setHorizonStatus).catch(() => {});
   }, [isRust, instance.id]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      autoDownloadUnlistenRef.current?.();
+      autoDownloadUnlistenRef.current = null;
+    };
+  }, []);
+
+  const handleAutoDownloadHorizonBuild = async () => {
+    if (clientDownloading || importingBuild) return;
+    setHorizonErr(null);
+    setClientDownloading(true);
+    setClientDownloadPercent(0);
+
+    try {
+      const unlisten = await api.onDownloadProgress(({ downloaded, total }) => {
+        if (!isMountedRef.current) return;
+        if (total > 0) {
+          const pct = Math.min(100, Math.max(0, Math.round((downloaded / total) * 100)));
+          setClientDownloadPercent(pct);
+        }
+      });
+      if (!isMountedRef.current) {
+        unlisten();
+        return;
+      }
+      autoDownloadUnlistenRef.current = unlisten;
+      const st = await api.downloadLatestHorizonBuild();
+      if (!isMountedRef.current) return;
+      setClientDownloadPercent(100);
+      setHorizonStatus(st);
+    } catch (err) {
+      if (isMountedRef.current) setHorizonErr(String(err));
+    } finally {
+      autoDownloadUnlistenRef.current?.();
+      autoDownloadUnlistenRef.current = null;
+      if (isMountedRef.current) setClientDownloading(false);
+    }
+  };
 
   const handlePickHorizonBuild = async (archive: boolean) => {
     setHorizonErr(null);
@@ -595,8 +640,9 @@ export function InstanceView({
     }
   };
 
-  const loaderLabel =
-    instance.loader === "vanilla"
+  const loaderLabel = isRust
+    ? "Rust"
+    : instance.loader === "vanilla"
       ? "Vanilla"
       : `${fmtLoader(instance.loader, t)}${instance.loaderVersion ? ` ${instance.loaderVersion}` : ""}`;
 
@@ -614,8 +660,7 @@ export function InstanceView({
     { id: "console", label: t.tabConsole },
     { id: "settings", label: t.tabSettings },
   ];
-  // Rust Edition (Horizon) has no Java mods, packs or per-instance game folder: console + settings only.
-  const tabs = isRust ? allTabs.filter((x) => x.id === "console" || x.id === "settings") : allTabs;
+  const tabs = allTabs;
 
   const availableUpdatesCount = Object.keys(updatesMap).length;
 
@@ -710,8 +755,12 @@ export function InstanceView({
           <span className="whitespace-nowrap">{instance.mcVersion}</span>
           <span className="text-[#ededed]/15">/</span>
           <span className="whitespace-nowrap">{loaderLabel}</span>
-          <span className="text-[#ededed]/15">/</span>
-          <span className="whitespace-nowrap">{instance.ramMb} MB</span>
+          {!isRust && (
+            <>
+              <span className="text-[#ededed]/15">/</span>
+              <span className="whitespace-nowrap">{instance.ramMb} MB</span>
+            </>
+          )}
           <span className="text-[#ededed]/15">/</span>
           <span className="whitespace-nowrap">
             {t.playTime}: {formatPlayTime(instance.playTimeSec, t)}
@@ -848,7 +897,7 @@ export function InstanceView({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {content.length > 0 && (
+                {content.length > 0 && !(isRust && activeTab === "mod") && (
                   <>
                     {availableUpdatesCount > 0 ? (
                       <button
@@ -891,7 +940,8 @@ export function InstanceView({
                     const n = await api.pickAndAddLocalContent(
                       instance.id,
                       activeTab,
-                      t.addFromFile
+                      t.addFromFile,
+                      isRust
                     );
                     if (n > 0) await loadContent(activeTab);
                   }}
@@ -901,29 +951,33 @@ export function InstanceView({
                   <span>{t.addFromFile}</span>
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    onOpenModrinthFor(
-                      activeTab === "shaderpack"
-                        ? "shader"
-                        : activeTab === "resourcepack"
-                          ? "resourcepack"
-                          : "mod"
-                    )
-                  }
-                  className="mono-btn-secondary h-9 px-3.5 rounded-[8px] flex items-center gap-2 text-[13px]"
-                >
-                  <Plus size={15} strokeWidth={1.5} className="text-[#a1a1a6]" />
-                  <span>{t.addFromModrinth}</span>
-                </button>
+                {!(isRust && activeTab === "mod") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenModrinthFor(
+                        activeTab === "shaderpack"
+                          ? "shader"
+                          : activeTab === "resourcepack"
+                            ? "resourcepack"
+                            : "mod"
+                      )
+                    }
+                    className="mono-btn-secondary h-9 px-3.5 rounded-[8px] flex items-center gap-2 text-[13px]"
+                  >
+                    <Plus size={15} strokeWidth={1.5} className="text-[#a1a1a6]" />
+                    <span>{t.addFromModrinth}</span>
+                  </button>
+                )}
               </div>
             </div>
 
             {filteredContent.length === 0 ? (
               <div className="py-16 text-center rounded-[12px] border border-[#ededed]/[0.08] bg-[#19191b]/50">
                 <p className="text-[14px] text-[#ededed]">{t.emptyContent}</p>
-                <p className="text-[13px] text-[#85858b] mt-1">{t.emptyContentHint}</p>
+                <p className="text-[13px] text-[#85858b] mt-1">
+                  {isRust && activeTab === "mod" ? t.rustModsOnlyHmod : t.emptyContentHint}
+                </p>
               </div>
             ) : (
               <div className="rounded-[12px] border border-[#ededed]/[0.08] bg-[#19191b] divide-y divide-[#ededed]/[0.06]">
@@ -1313,10 +1367,20 @@ export function InstanceView({
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      disabled={importingBuild}
+                      disabled={importingBuild || clientDownloading}
+                      onClick={handleAutoDownloadHorizonBuild}
+                      className="mono-btn-secondary h-8 px-3 rounded-[8px] text-[12px] disabled:opacity-50"
+                    >
+                      {clientDownloading
+                        ? `${t.horizonBuildDownloading} ${clientDownloadPercent}%`
+                        : t.horizonBuildDownloadAuto}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={importingBuild || clientDownloading}
                       onClick={() => handlePickHorizonBuild(false)}
                       className="mono-btn-secondary h-8 px-3 rounded-[8px] text-[12px] disabled:opacity-50"
                     >
@@ -1324,13 +1388,21 @@ export function InstanceView({
                     </button>
                     <button
                       type="button"
-                      disabled={importingBuild}
+                      disabled={importingBuild || clientDownloading}
                       onClick={() => handlePickHorizonBuild(true)}
                       className="mono-btn-secondary h-8 px-3 rounded-[8px] text-[12px] disabled:opacity-50"
                     >
                       {t.horizonBuildPickZip}
                     </button>
                   </div>
+                  {clientDownloading && (
+                    <div className="h-1.5 w-full rounded-full bg-[#ededed]/[0.08] overflow-hidden">
+                      <div
+                        className="h-full bg-[#ededed] transition-[width] duration-150"
+                        style={{ width: `${clientDownloadPercent}%` }}
+                      />
+                    </div>
+                  )}
                   {horizonErr && <div className="text-[13px] text-[#e5484d]">{horizonErr}</div>}
                 </div>
               ) : (

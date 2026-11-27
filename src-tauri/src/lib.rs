@@ -505,7 +505,7 @@ async fn resolve_catalog_batch(
             }
         }
 
-        if is_rust && matches!(effective_type.as_str(), "mod" | "shader" | "shaderpack") {
+        if is_rust && effective_type == "mod" {
             resolved.push(ResolvedBatchFile {
                 source: entry.source,
                 project_id: entry.project_id,
@@ -519,7 +519,7 @@ async fn resolve_catalog_batch(
                 is_dependency: entry.is_dependency,
                 required_by: entry.required_by,
                 already_installed: false,
-                error: Some("Mods and shaders cannot be installed into Rust Edition instances".into()),
+                error: Some("Rust Edition supports only local .hmod mods; catalog mods cannot be installed".into()),
             });
             continue;
         }
@@ -651,10 +651,10 @@ async fn install_catalog_project(
     loader: Option<String>,
     install_deps: Option<bool>,
 ) -> Result<InstallResult, String> {
-    if matches!(project_type.as_str(), "mod" | "shader" | "shaderpack") {
+    if project_type == "mod" {
         if let Some(inst) = storage::load_instances().into_iter().find(|i| i.id == instance_id) {
             if inst.edition == horizon::RUST_EDITION {
-                return Err("Mods and shaders cannot be installed into Rust Edition instances".into());
+                return Err("Rust Edition supports only local .hmod mods; catalog mods cannot be installed".into());
             }
         }
     }
@@ -1000,6 +1000,10 @@ pub fn run() {
             delete_world,
             get_horizon_status,
             import_horizon_build,
+            horizon::prepare_horizon_assets,
+            horizon::launch_horizon,
+            horizon::download_client,
+            horizon::download_latest_horizon_build,
             list_screenshots,
             get_screenshot_data,
             open_screenshot,

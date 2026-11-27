@@ -344,20 +344,21 @@ pub fn list_instance_content(instance_id: &str, kind: &str) -> Vec<InstalledCont
         let enabled = !filename.ends_with(".disabled");
         let base_name = filename.trim_end_matches(".disabled");
         let is_valid = match kind {
-            "mod" => base_name.ends_with(".jar"),
+            "mod" => base_name.ends_with(".jar") || base_name.ends_with(".hmod"),
             _ => base_name.ends_with(".zip") || base_name.ends_with(".jar"),
         };
         if !is_valid {
             continue;
         }
         let fallback_name = base_name
+            .trim_end_matches(".hmod")
             .trim_end_matches(".jar")
             .trim_end_matches(".zip")
             .to_string();
         let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
         let saved_meta = meta_map.get(base_name).cloned();
-        let jar_meta = if saved_meta.is_none() && kind == "mod" {
+        let jar_meta = if saved_meta.is_none() && kind == "mod" && base_name.ends_with(".jar") {
             inspect_jar_metadata(&path)
         } else {
             None
